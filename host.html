@@ -112,6 +112,13 @@
                         <h4>Galaga '88</h4>
                         <p>สงครามอวกาศล่าแต้ม ยิงเอเลี่ยน ระวังยิงผิดพวก 👨‍🚀 หรือระเบิด 💣 ลดคะแนน! ถ่ายทอดสด 3 อันดับแรก</p>
                     </div>
+
+                    <!-- GAME 6: PopCat Battle -->
+                    <div class="game-select-card" data-game="popcat">
+                        <div class="game-select-icon">🐱</div>
+                        <h4>PopCat Battle</h4>
+                        <p>รัวนิ้วเคาะแมว PopCat อ้าปากโกยแต้มใน 1 นาที! คลิกเกิน 100 อ้าปากกว้าง ถ่ายทอดสด 3 อันดับแรก</p>
+                    </div>
                 </div>
             </div>
         </section>
@@ -276,6 +283,74 @@
                     <h3>อันดับคะแนนสด Galaga '88</h3>
                     <div class="sidebar-list-wrapper">
                         <ul id="galaga-leaderboard-list">
+                            <!-- อันดับเรียลไทม์จะขึ้นที่นี่ -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3.6. GAME SCREEN: POPCAT BATTLE (รัวเคาะแมวอ้าปาก) -->
+        <section id="screen-game-popcat" class="screen">
+            <div class="game-header">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <button class="btn-back btn-back-to-lobby" title="กลับหน้าศูนย์ควบคุม">🔙 กลับ</button>
+                    <div class="room-indicator">ห้องแข่งขัน: <span>GFLETH</span> | โหมด: PopCat Battle – ศึกเคาะแมวอ้าปาก</div>
+                </div>
+                <div class="game-state-text" id="popcat-announcement">เตรียมรัวนิ้วเคาะแมว PopCat ใน 1 นาที! คลิกเกิน 100 เปลี่ยนร่างอ้าปากกว้าง 🐱💥</div>
+                <div class="game-timer" id="popcat-timer">60s</div>
+            </div>
+
+            <div class="game-layout catch-game-layout">
+                <div class="catch-stages-area">
+                    <div class="catch-stages-title-bar">
+                        <h3>🐱 ถ่ายทอดสดการเล่น 3 อันดับแรก (LIVE TOP 3 STREAM)</h3>
+                        <div class="live-pulse-badge"><span class="pulse-dot"></span> LIVE 60 FPS</div>
+                    </div>
+                    
+                    <div class="catch-top3-grid">
+                        <!-- STAGE 1: RANK #1 (GOLD) -->
+                        <div class="catch-stage-card stage-rank-1" id="popcat-stage-0">
+                            <div class="stage-rank-badge badge-gold">🥇 อันดับ 1 (TOP POPPER)</div>
+                            <div class="stage-player-header">
+                                <span class="stage-player-name" id="popcat-stage-name-0">รอนักเคาะ...</span>
+                                <span class="stage-player-score" id="popcat-stage-score-0">0 pops</span>
+                            </div>
+                            <div class="stage-canvas-wrapper">
+                                <canvas id="popcat-canvas-0"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- STAGE 2: RANK #2 (SILVER) -->
+                        <div class="catch-stage-card stage-rank-2" id="popcat-stage-1">
+                            <div class="stage-rank-badge badge-silver">🥈 อันดับ 2</div>
+                            <div class="stage-player-header">
+                                <span class="stage-player-name" id="popcat-stage-name-1">รอนักเคาะ...</span>
+                                <span class="stage-player-score" id="popcat-stage-score-1">0 pops</span>
+                            </div>
+                            <div class="stage-canvas-wrapper">
+                                <canvas id="popcat-canvas-1"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- STAGE 3: RANK #3 (BRONZE) -->
+                        <div class="catch-stage-card stage-rank-3" id="popcat-stage-2">
+                            <div class="stage-rank-badge badge-bronze">🥉 อันดับ 3</div>
+                            <div class="stage-player-header">
+                                <span class="stage-player-name" id="popcat-stage-name-2">รอนักเคาะ...</span>
+                                <span class="stage-player-score" id="popcat-stage-score-2">0 pops</span>
+                            </div>
+                            <div class="stage-canvas-wrapper">
+                                <canvas id="popcat-canvas-2"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card leaderboard-sidebar">
+                    <h3>อันดับคะแนนสด PopCat Battle</h3>
+                    <div class="sidebar-list-wrapper">
+                        <ul id="popcat-leaderboard-list">
                             <!-- อันดับเรียลไทม์จะขึ้นที่นี่ -->
                         </ul>
                     </div>

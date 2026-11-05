@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
         galaga: document.getElementById('screen-controller-galaga'),
         buzz: document.getElementById('screen-controller-buzz'),
         wheel: document.getElementById('screen-controller-wheel'),
+        popcat: document.getElementById('screen-controller-popcat'),
         result: document.getElementById('screen-result')
     };
 
@@ -54,6 +55,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const galagaPlayerCanvas = document.getElementById('galaga-player-canvas');
     const btnGalagaFire = document.getElementById('btn-galaga-fire');
     const galagaDragHint = document.getElementById('galaga-drag-hint');
+
+    // PopCat Battle Controller Elements
+    const popcatPlayerScore = document.getElementById('popcat-player-score');
+    const popcatPlayerRank = document.getElementById('popcat-player-rank');
+    const popcatPlayerPps = document.getElementById('popcat-player-pps');
+    const popcatPlayerTimer = document.getElementById('popcat-player-timer');
+    const popcatPlayerAnnouncement = document.getElementById('popcat-player-announcement');
+    const popcatInteractiveArea = document.getElementById('popcat-interactive-area');
+    const popcatImgWrapper = document.getElementById('popcat-img-wrapper');
+    const popcatImg = document.getElementById('popcat-img');
+    const popcatTierBadge = document.getElementById('popcat-tier-badge');
+    const popcatFloatingLayer = document.getElementById('popcat-floating-layer');
+    const popcatTouchHint = document.getElementById('popcat-touch-hint');
 
     // Fast Buzz Elements
     const btnBuzz = document.getElementById('btn-buzz');
@@ -114,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let catchCountdownTimer = null;
     let catchIsDragging = false;
     let catchShakeTimer = 0;
+    let catchRecentEvents = [];
 
     const CATCH_ITEM_TYPES = [
         { type: 'coin', symbol: '🪙', color: '#ffcc00', points: 10, comboInc: 1, soundFreq: 650, weight: 35, speed: 0.32 },
@@ -148,6 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let galagaShakeTimer = 0;
     let galagaCountdownTimer = null;
     let galagaNextEnemyId = 1;
+    let galagaRecentEvents = [];
 
     const GALAGA_ENEMY_TYPES = [
         { type: 'drone', symbol: '👾', name: 'Drone Bug', color: '#00f0ff', hp: 1, points: 10, speed: 0.22, weight: 45 },
@@ -157,6 +173,26 @@ document.addEventListener('DOMContentLoaded', () => {
         { type: 'friendly', symbol: '👨‍🚀', name: 'Friendly Astronaut', color: '#38ef7d', hp: 1, points: -30, speed: 0.13, weight: 16, isFriendly: true },
         { type: 'mine', symbol: '💣', name: 'Space Mine', color: '#ff0844', hp: 1, points: -20, speed: 0.15, weight: 14, isMine: true }
     ];
+
+    // PopCat Battle State & Preloads
+    let popcatScore = 0;
+    let popcatTapTimes = [];
+    let popcatIsPopping = false;
+    let popcatOpenTimeout = null;
+    let popcatPpsInterval = null;
+    let popcatTelemetryInterval = null;
+    let popcatCountdownTimer = null;
+    const activePopcatPointers = new Set();
+
+    // แคชรูปภาพเพื่อสลับหน้าตาแบบ Zero-Latency
+    const popcatImagesCache = {
+        normal: new Image(),
+        open1: new Image(),
+        open2: new Image()
+    };
+    popcatImagesCache.normal.src = 'cat_normal.png';
+    popcatImagesCache.open1.src = 'cat_open1.png';
+    popcatImagesCache.open2.src = 'cat_open2.png';
 
     const PEER_PREFIX = 'gfleth-rocket-';
 
@@ -354,6 +390,48 @@ document.addEventListener('DOMContentLoaded', () => {
         btnGalagaFire.addEventListener('mouseup', () => {
             galagaIsFiring = false;
         });
+    }
+
+    // PopCat Battle Interactive Area Listeners (Multi-Touch & Fast Pointer Handling)
+    if (popcatInteractiveArea) {
+        popcatInteractiveArea.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            handlePopcatPointerDown(e);
+        }, { passive: false });
+
+        window.addEventListener('pointerup', handlePopcatPointerUp);
+        window.addEventListener('pointercancel', handlePopcatPointerUp);
+
+        // Fallback touch events สำหรับเบราว์เซอร์มือถือ
+        popcatInteractiveArea.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const t = e.changedTouches[i];
+                handlePopcatPointerDown({
+                    clientX: t.clientX,
+                    clientY: t.clientY,
+                    pointerId: t.identifier
+                });
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchend', (e) => {
+            if (e.changedTouches) {
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    handlePopcatPointerUp({ pointerId: e.changedTouches[i].identifier });
+                }
+            }
+        });
+
+        window.addEventListener('touchcancel', (e) => {
+            if (e.changedTouches) {
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    handlePopcatPointerUp({ pointerId: e.changedTouches[i].identifier });
+                }
+            }
+        });
+
+        popcatInteractiveArea.addEventListener('contextmenu', (e) => e.preventDefault());
     }
 
     // For showhost parameter (Fallback)
@@ -579,6 +657,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 runCatchCountdown(data.seed);
             } else if (currentMode === 'galaga') {
                 runGalagaCountdown(data.seed);
+            } else if (currentMode === 'popcat') {
+                runPopcatCountdown(data.countdown || 5);
             }
         }
         else if (data.type === 'START_GAME') {
@@ -589,6 +669,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 startCatchController(data.seed, data.duration || 60);
             } else if (currentMode === 'galaga') {
                 startGalagaController(data.seed, data.duration || 60);
+            } else if (currentMode === 'popcat') {
+                startPopcatController(data.duration || 60);
             }
         }
         else if (data.type === 'TIMER_TICK') {
@@ -598,6 +680,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (catchPlayerTimer) catchPlayerTimer.textContent = `${data.timeLeft}s`;
             } else if (currentMode === 'galaga') {
                 if (galagaPlayerTimer) galagaPlayerTimer.textContent = `${data.timeLeft}s`;
+            } else if (currentMode === 'popcat') {
+                if (popcatPlayerTimer) popcatPlayerTimer.textContent = `${data.timeLeft}s`;
             }
         }
         else if (data.type === 'UPDATE_PROGRESS') {
@@ -611,6 +695,9 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (data.type === 'GALAGA_STANDINGS') {
             updateGalagaStandings(data.standings);
         }
+        else if (data.type === 'POPCAT_STANDINGS') {
+            updatePopcatStandings(data.standings);
+        }
         else if (data.type === 'GAME_OVER') {
             gameActive = false;
             if (currentMode === 'rocket') {
@@ -620,6 +707,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 endCatchController();
             } else if (currentMode === 'galaga') {
                 endGalagaController();
+            } else if (currentMode === 'popcat') {
+                endPopcatController();
             }
         }
         // Buzz events
@@ -708,6 +797,9 @@ document.addEventListener('DOMContentLoaded', () => {
             showScreen('galaga');
             resetGalagaPlayerState();
             setTimeout(initGalagaCanvas, 80);
+        } else if (gameMode === 'popcat') {
+            showScreen('popcat');
+            resetPopcatPlayerState();
         } else if (gameMode === 'buzz') {
             showScreen('buzz');
             btnBuzz.disabled = true;
@@ -804,6 +896,7 @@ document.addEventListener('DOMContentLoaded', () => {
         catchItems = [];
         catchParticles = [];
         catchFloatingTexts = [];
+        catchRecentEvents = [];
         catchShakeTimer = 0;
         if (catchAnimId) {
             cancelAnimationFrame(catchAnimId);
@@ -976,8 +1069,15 @@ document.addEventListener('DOMContentLoaded', () => {
             triggerDeviceVibrate([100, 50, 100]);
             playSynthBeep(item.soundFreq || 140, 0.25);
             
-            addCatchFloatingText(catchBasketX, 0.81, `-${penalty} 💥`, '#ff0055');
+            const eventText = `-${penalty} 💥`;
+            addCatchFloatingText(catchBasketX, 0.81, eventText, '#ff0055');
             spawnCatchParticles(catchBasketX, 0.85, '#ff0055', 12);
+            catchRecentEvents.push({
+                x: catchBasketX,
+                y: 0.81,
+                text: eventText,
+                color: '#ff0055'
+            });
         } else {
             catchCombo++;
             if (catchCombo > catchMaxCombo) catchMaxCombo = catchCombo;
@@ -991,6 +1091,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const comboText = catchCombo > 1 ? `+${earned} (x${catchCombo})` : `+${earned}`;
             addCatchFloatingText(catchBasketX, 0.81, comboText, item.color);
             spawnCatchParticles(catchBasketX, 0.85, item.color, 10);
+            catchRecentEvents.push({
+                x: catchBasketX,
+                y: 0.81,
+                text: comboText,
+                color: item.color
+            });
         }
 
         if (catchPlayerScore) catchPlayerScore.textContent = catchScore;
@@ -1021,11 +1127,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function sendCatchTelemetry() {
         if (!hostConnection || !hostConnection.open) return;
+        const eventsToSend = catchRecentEvents.splice(0);
         hostConnection.send({
             type: 'CATCH_UPDATE',
             basketX: catchBasketX,
             score: catchScore,
-            combo: catchCombo
+            combo: catchCombo,
+            items: catchItems.map(it => ({
+                x: Math.round(it.x * 1000) / 1000,
+                y: Math.round(it.y * 1000) / 1000,
+                speed: Math.round((it.speed || 0.35) * 1000) / 1000,
+                rot: Math.round((it.rot || 0) * 100) / 100,
+                rotSpeed: Math.round((it.rotSpeed || 0) * 100) / 100,
+                symbol: it.symbol,
+                color: it.color
+            })),
+            events: eventsToSend
         });
     }
 
@@ -1207,9 +1324,23 @@ document.addEventListener('DOMContentLoaded', () => {
         triggerDeviceVibrate([100, 50, 100, 50, 200]);
     }
 
+    // Shared Singleton AudioContext ป้องกัน Garbage Collection และ Audio Hardware Throttling
+    let sharedPlayerAudioCtx = null;
+    function getPlayerAudioContext() {
+        if (!sharedPlayerAudioCtx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) sharedPlayerAudioCtx = new AudioCtx();
+        }
+        if (sharedPlayerAudioCtx && sharedPlayerAudioCtx.state === 'suspended') {
+            sharedPlayerAudioCtx.resume().catch(() => {});
+        }
+        return sharedPlayerAudioCtx;
+    }
+
     function playSynthBeep(frequency = 440, duration = 0.1) {
         try {
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const audioCtx = getPlayerAudioContext();
+            if (!audioCtx) return;
             const oscillator = audioCtx.createOscillator();
             const gainNode = audioCtx.createGain();
 
@@ -1266,6 +1397,7 @@ document.addEventListener('DOMContentLoaded', () => {
         galagaEnemies = [];
         galagaParticles = [];
         galagaFloatingTexts = [];
+        galagaRecentEvents = [];
         galagaDualFighter = false;
         galagaDualTimer = 0;
         galagaFireCooldown = 0;
@@ -1343,6 +1475,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         triggerDeviceVibrate(15);
+        sendGalagaTelemetry();
     }
 
     function spawnGalagaEnemy() {
@@ -1408,6 +1541,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (galagaDualTimer <= 0) {
                 galagaDualFighter = false;
                 addGalagaFloatingText(galagaShipX, 0.78, 'DUAL EXPIRED', '#ffaa00');
+                galagaRecentEvents.push({ x: galagaShipX, y: 0.78, text: 'DUAL EXPIRED', color: '#ffaa00' });
             }
         }
 
@@ -1438,6 +1572,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     galagaScore = Math.max(0, galagaScore - 2);
                     if (galagaPlayerScore) galagaPlayerScore.textContent = galagaScore;
                     addGalagaFloatingText(laser.x, 0.06, '-2 MISS', 'rgba(255, 90, 90, 0.7)');
+                    galagaRecentEvents.push({ x: laser.x, y: 0.06, text: '-2 MISS', color: 'rgba(255, 90, 90, 0.7)' });
                 }
             }
         }
@@ -1479,8 +1614,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     galagaScore += 20;
                     playSynthBeep(920, 0.18);
                     triggerDeviceVibrate([40, 40, 60]);
-                    addGalagaFloatingText(galagaShipX, 0.78, '+20 👨‍🚀 RESCUED!', '#00ff88');
+                    const rescueText = '+20 👨‍🚀 RESCUED!';
+                    addGalagaFloatingText(galagaShipX, 0.78, rescueText, '#00ff88');
                     spawnGalagaParticles(galagaShipX, 0.84, '#00ff88', 10);
+                    galagaRecentEvents.push({
+                        x: galagaShipX,
+                        y: 0.78,
+                        text: rescueText,
+                        color: '#00ff88'
+                    });
                 } else {
                     galagaShakeTimer = 0.35;
                     galagaCombo = 0;
@@ -1490,6 +1632,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     const hitLabel = enemy.isMine ? '-20 💣 ชนทุ่นระเบิด!' : '-20 💥 ยานถูกชน!';
                     addGalagaFloatingText(galagaShipX, 0.78, hitLabel, '#ff0055');
                     spawnGalagaParticles(galagaShipX, 0.84, '#ff0055', 12);
+                    galagaRecentEvents.push({
+                        x: galagaShipX,
+                        y: 0.78,
+                        text: hitLabel,
+                        color: '#ff0055'
+                    });
                 }
                 galagaEnemies.splice(i, 1);
                 if (galagaPlayerScore) galagaPlayerScore.textContent = galagaScore;
@@ -1539,8 +1687,15 @@ document.addEventListener('DOMContentLoaded', () => {
             galagaScore += enemy.points;
             playSynthBeep(1200, 0.2);
             triggerDeviceVibrate([50, 50, 100]);
-            addGalagaFloatingText(enemy.x, enemy.y, '⭐ DUAL FIGHTER! +50', '#00ff88');
+            const powerText = '⭐ DUAL FIGHTER! +50';
+            addGalagaFloatingText(enemy.x, enemy.y, powerText, '#00ff88');
             spawnGalagaParticles(enemy.x, enemy.y, '#00ff88', 14);
+            galagaRecentEvents.push({
+                x: enemy.x,
+                y: enemy.y,
+                text: powerText,
+                color: '#00ff88'
+            });
         } else if (enemy.isFriendly) {
             // ยิงผิด! ยิงโดนนักบินพวกเดียวกัน (Friendly Fire)
             const penalty = 30;
@@ -1549,8 +1704,15 @@ document.addEventListener('DOMContentLoaded', () => {
             galagaShakeTimer = 0.25;
             playSynthBeep(160, 0.25); // เสียงเตือนติดลบ
             triggerDeviceVibrate([100, 50, 100]);
-            addGalagaFloatingText(enemy.x, enemy.y, '-30 👨‍🚀 ยิงผิดพวก!', '#ff0055');
+            const friendlyText = '-30 👨‍🚀 ยิงผิดพวก!';
+            addGalagaFloatingText(enemy.x, enemy.y, friendlyText, '#ff0055');
             spawnGalagaParticles(enemy.x, enemy.y, '#ff0055', 12);
+            galagaRecentEvents.push({
+                x: enemy.x,
+                y: enemy.y,
+                text: friendlyText,
+                color: '#ff0055'
+            });
         } else if (enemy.isMine) {
             // ยิงผิด! ยิงโดนทุ่นระเบิดอวกาศ (Space Mine)
             const penalty = 20;
@@ -1559,8 +1721,15 @@ document.addEventListener('DOMContentLoaded', () => {
             galagaShakeTimer = 0.35;
             playSynthBeep(120, 0.3); // เสียงบึ้ม
             triggerDeviceVibrate([120, 60, 120]);
-            addGalagaFloatingText(enemy.x, enemy.y, '-20 💣 บึ้ม! โดนระเบิด', '#ff4400');
+            const mineText = '-20 💣 บึ้ม! โดนระเบิด';
+            addGalagaFloatingText(enemy.x, enemy.y, mineText, '#ff4400');
             spawnGalagaParticles(enemy.x, enemy.y, '#ff4400', 16);
+            galagaRecentEvents.push({
+                x: enemy.x,
+                y: enemy.y,
+                text: mineText,
+                color: '#ff4400'
+            });
         } else {
             galagaCombo++;
             if (galagaCombo > galagaMaxCombo) galagaMaxCombo = galagaCombo;
@@ -1574,6 +1743,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const comboLabel = galagaCombo > 1 ? `+${earned} (x${galagaCombo})` : `+${earned}`;
             addGalagaFloatingText(enemy.x, enemy.y, comboLabel, enemy.color);
             spawnGalagaParticles(enemy.x, enemy.y, enemy.color, enemy.type === 'boss' ? 18 : 8);
+            galagaRecentEvents.push({
+                x: enemy.x,
+                y: enemy.y,
+                text: comboLabel,
+                color: enemy.color
+            });
         }
 
         if (galagaPlayerScore) galagaPlayerScore.textContent = galagaScore;
@@ -1604,12 +1779,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function sendGalagaTelemetry() {
         if (!hostConnection || !hostConnection.open) return;
+        const eventsToSend = galagaRecentEvents.splice(0);
         hostConnection.send({
             type: 'GALAGA_UPDATE',
             shipX: galagaShipX,
             score: galagaScore,
             combo: galagaCombo,
-            dualFighter: galagaDualFighter
+            dualFighter: galagaDualFighter,
+            enemies: galagaEnemies.map(e => ({
+                x: Math.round(e.x * 1000) / 1000,
+                y: Math.round(e.y * 1000) / 1000,
+                speed: Math.round((e.speed || 0.2) * 1000) / 1000,
+                swoopOffset: Math.round((e.swoopOffset || 0) * 100) / 100,
+                symbol: e.symbol,
+                color: e.color,
+                type: e.type,
+                isFriendly: !!e.isFriendly,
+                isMine: !!e.isMine
+            })),
+            lasers: galagaLasers.map(l => ({
+                x: Math.round(l.x * 1000) / 1000,
+                y: Math.round(l.y * 1000) / 1000,
+                speed: Math.round((l.speed || 1.3) * 100) / 100,
+                color: l.color
+            })),
+            events: eventsToSend
         });
     }
 
@@ -1829,6 +2023,331 @@ document.addEventListener('DOMContentLoaded', () => {
         if (galagaPlayerAnnouncement) galagaPlayerAnnouncement.textContent = '🏁 สิ้นสุดภารกิจอวกาศ 1 นาที!';
         triggerMobileConfetti();
         triggerDeviceVibrate([100, 50, 100, 50, 200]);
+    }
+
+    // === 6.8 GAME: POPCAT BATTLE (รัวนิ้วเคาะแมวอ้าปาก) PLAYER LOGIC ===
+    function runPopcatCountdown(countdown = 5) {
+        resetPopcatPlayerState();
+        let count = countdown || 5;
+        if (popcatPlayerAnnouncement) popcatPlayerAnnouncement.textContent = `🐱 เตรียมรัวนิ้วเคาะแมวใน... ${count}`;
+        if (popcatPlayerTimer) popcatPlayerTimer.textContent = `${count}s`;
+        triggerDeviceVibrate(60);
+        playPopcatAudio(1);
+
+        if (popcatCountdownTimer) clearInterval(popcatCountdownTimer);
+        popcatCountdownTimer = setInterval(() => {
+            count--;
+            if (count > 0) {
+                if (popcatPlayerAnnouncement) popcatPlayerAnnouncement.textContent = `🐱 เตรียมรัวนิ้วเคาะแมวใน... ${count}`;
+                if (popcatPlayerTimer) popcatPlayerTimer.textContent = `${count}s`;
+                triggerDeviceVibrate(60);
+                playPopcatAudio(1);
+            } else if (count === 0) {
+                if (popcatPlayerAnnouncement) popcatPlayerAnnouncement.textContent = '🔥 เริ่มรัวนิ้วได้เลย! POP! 💥';
+                if (popcatPlayerTimer) popcatPlayerTimer.textContent = '60s';
+                clearInterval(popcatCountdownTimer);
+                popcatCountdownTimer = null;
+            }
+        }, 1000);
+    }
+
+    function startPopcatController(duration = 60) {
+        gameActive = true;
+        if (popcatCountdownTimer) {
+            clearInterval(popcatCountdownTimer);
+            popcatCountdownTimer = null;
+        }
+        if (popcatPlayerAnnouncement) {
+            popcatPlayerAnnouncement.textContent = '🔥 เริ่มได้! รัวเคาะแมวให้ไวที่สุด! (คลิกเกิน 100 เปลี่ยนร่าง!)';
+        }
+        if (popcatPlayerTimer) popcatPlayerTimer.textContent = `${duration}s`;
+        
+        // รัน Loop วัดอัตราความเร็วการกด PPS (Pops Per Second)
+        if (popcatPpsInterval) clearInterval(popcatPpsInterval);
+        popcatPpsInterval = setInterval(updatePopcatPps, 200);
+
+        // ซิงค์ข้อมูลสถิติกับโฮสต์เป็นระยะแบบ Throttled Telemetry
+        if (popcatTelemetryInterval) clearInterval(popcatTelemetryInterval);
+        popcatTelemetryInterval = setInterval(sendPopcatTelemetry, 150);
+    }
+
+    function resetPopcatPlayerState() {
+        popcatScore = 0;
+        popcatTapTimes = [];
+        popcatIsPopping = false;
+        activePopcatPointers.clear();
+        if (popcatCountdownTimer) {
+            clearInterval(popcatCountdownTimer);
+            popcatCountdownTimer = null;
+        }
+        if (popcatOpenTimeout) clearTimeout(popcatOpenTimeout);
+        if (popcatPpsInterval) clearInterval(popcatPpsInterval);
+        if (popcatTelemetryInterval) clearInterval(popcatTelemetryInterval);
+
+        if (popcatPlayerScore) popcatPlayerScore.textContent = '0';
+        if (popcatPlayerPps) popcatPlayerPps.innerHTML = '0 <small>pps</small>';
+        if (popcatPlayerRank) popcatPlayerRank.textContent = '# -';
+        if (popcatPlayerTimer) popcatPlayerTimer.textContent = '60s';
+        if (popcatPlayerAnnouncement) popcatPlayerAnnouncement.textContent = 'เตรียมรัวนิ้วเคาะแมว PopCat!';
+
+        if (popcatTierBadge) {
+            popcatTierBadge.textContent = '🐱 ขั้น 1: เคาะเปิดปากปกติ (เป้าหมาย 100 ครั้งเพื่อเปลี่ยนร่าง!)';
+            popcatTierBadge.classList.remove('tier2');
+        }
+        if (popcatImgWrapper) popcatImgWrapper.classList.remove('popping', 'tier2');
+        if (popcatImg) popcatImg.src = 'cat_normal.png';
+        if (popcatFloatingLayer) popcatFloatingLayer.innerHTML = '';
+    }
+
+    function endPopcatController() {
+        gameActive = false;
+        activePopcatPointers.clear();
+        if (popcatCountdownTimer) {
+            clearInterval(popcatCountdownTimer);
+            popcatCountdownTimer = null;
+        }
+        if (popcatOpenTimeout) clearTimeout(popcatOpenTimeout);
+        if (popcatPpsInterval) clearInterval(popcatPpsInterval);
+        if (popcatTelemetryInterval) clearInterval(popcatTelemetryInterval);
+
+        if (popcatImg) popcatImg.src = 'cat_normal.png';
+        if (popcatImgWrapper) popcatImgWrapper.classList.remove('popping');
+        if (popcatPlayerAnnouncement) {
+            popcatPlayerAnnouncement.textContent = `🏁 หมดเวลา! คุณเคาะได้ทั้งหมด ${popcatScore} ครั้ง! 🐱🎉`;
+        }
+        triggerMobileConfetti();
+        triggerDeviceVibrate([100, 50, 100, 50, 200]);
+    }
+
+    function handlePopcatPointerDown(e) {
+        if (!gameActive) return;
+        if (e.pointerId !== undefined) {
+            activePopcatPointers.add(e.pointerId);
+        }
+        triggerPop(e);
+    }
+
+    function handlePopcatPointerUp(e) {
+        if (e && e.pointerId !== undefined) {
+            activePopcatPointers.delete(e.pointerId);
+        } else {
+            activePopcatPointers.clear();
+        }
+
+        if (activePopcatPointers.size === 0) {
+            if (popcatOpenTimeout) clearTimeout(popcatOpenTimeout);
+            popcatOpenTimeout = setTimeout(() => {
+                if (activePopcatPointers.size === 0) {
+                    closePopcatMouth();
+                }
+            }, 75);
+        }
+    }
+
+    function triggerPop(e) {
+        if (!gameActive) return;
+
+        popcatScore++;
+        const now = Date.now();
+        popcatTapTimes.push(now);
+
+        const tier = popcatScore > 100 ? 2 : 1;
+
+        // อัปเดตสถิติบนหน้าจอมือถือ
+        if (popcatPlayerScore) popcatPlayerScore.textContent = popcatScore;
+
+        // ตรวจสอบการเปลี่ยนร่างเมื่อเกิน 100 ครั้ง
+        if (popcatScore === 101) {
+            if (popcatTierBadge) {
+                popcatTierBadge.textContent = '🔥 ขั้น 2: ซูเปอร์ป๊อปแคท! (เปลี่ยนร่างอ้าปากกว้าง cat_open2) 💥';
+                popcatTierBadge.classList.add('tier2');
+            }
+            if (popcatImgWrapper) popcatImgWrapper.classList.add('tier2');
+            if (popcatPlayerAnnouncement) {
+                popcatPlayerAnnouncement.textContent = '⚡ ปลดล็อค SUPER POPCAT! เปลี่ยนร่างอ้าปากกว้าง! 💥';
+            }
+            triggerDeviceVibrate([80, 50, 150]);
+        }
+
+        // สลับรูปภาพแมวอ้าปาก:
+        // ถ้าไม่เกิน 100 -> cat_open1.png
+        // ถ้าเกิน 100 -> cat_open2.png
+        const targetSrc = tier === 2 ? 'cat_open2.png' : 'cat_open1.png';
+        if (popcatImg && popcatImg.getAttribute('src') !== targetSrc) {
+            popcatImg.src = targetSrc;
+        }
+
+        if (popcatImgWrapper) {
+            popcatImgWrapper.classList.add('popping');
+        }
+        popcatIsPopping = true;
+
+        // เล่นเสียงสังเคราะห์และสั่นเครื่อง
+        playPopcatAudio(tier);
+        triggerDeviceVibrate(15);
+
+        // แสดงตัวเลขคะแนนลอยตรงตำแหน่งที่นิ้วสัมผัส
+        let tapX = null;
+        let tapY = null;
+        if (e && popcatInteractiveArea) {
+            const rect = popcatInteractiveArea.getBoundingClientRect();
+            const cx = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : null);
+            const cy = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : null);
+            if (cx !== null && cy !== null) {
+                tapX = cx - rect.left;
+                tapY = cy - rect.top;
+            }
+        }
+        createPopcatFloatingText(tapX, tapY, tier);
+
+        // ส่งเหตุการณ์เคาะไปยังโฮสต์จอกลางแบบเรียลไทม์
+        sendPopcatPop(tier);
+
+        // หน่วงเวลาปิดปากแมวเมื่อปล่อยนิ้ว
+        if (popcatOpenTimeout) clearTimeout(popcatOpenTimeout);
+        popcatOpenTimeout = setTimeout(() => {
+            if (activePopcatPointers.size === 0) {
+                closePopcatMouth();
+            }
+        }, 85);
+    }
+
+    function closePopcatMouth() {
+        popcatIsPopping = false;
+        if (popcatImg) popcatImg.src = 'cat_normal.png';
+        if (popcatImgWrapper) popcatImgWrapper.classList.remove('popping');
+        sendPopcatRelease();
+    }
+
+    function createPopcatFloatingText(x, y, tier) {
+        if (!popcatFloatingLayer) return;
+        // ป้องกัน DOM Bloat เมื่อรัวนิ้วอย่างรวดเร็ว (Cap max 18 active nodes)
+        while (popcatFloatingLayer.childElementCount >= 18) {
+            popcatFloatingLayer.removeChild(popcatFloatingLayer.firstElementChild);
+        }
+
+        const span = document.createElement('span');
+        span.className = 'popcat-float-num' + (tier === 2 ? ' tier2' : '');
+        span.textContent = tier === 2 ? '+1 🔥' : '+1';
+
+        const areaWidth = popcatInteractiveArea ? popcatInteractiveArea.clientWidth : 300;
+        const areaHeight = popcatInteractiveArea ? popcatInteractiveArea.clientHeight : 300;
+
+        const posX = x !== null ? x : (areaWidth / 2 + (Math.random() - 0.5) * 60);
+        const posY = y !== null ? y : (areaHeight / 2 + (Math.random() - 0.5) * 40);
+
+        span.style.left = `${posX}px`;
+        span.style.top = `${posY}px`;
+
+        popcatFloatingLayer.appendChild(span);
+
+        span.addEventListener('animationend', () => {
+            if (span.parentNode) span.parentNode.removeChild(span);
+        });
+
+        setTimeout(() => {
+            if (span.parentNode) span.parentNode.removeChild(span);
+        }, 700);
+    }
+
+    function updatePopcatPps() {
+        const now = Date.now();
+        popcatTapTimes = popcatTapTimes.filter(t => now - t <= 1000);
+        const pps = popcatTapTimes.length;
+        if (popcatPlayerPps) {
+            popcatPlayerPps.innerHTML = `${pps} <small>pps</small>`;
+        }
+        return pps;
+    }
+
+    function updatePopcatStandings(standings) {
+        if (!Array.isArray(standings) || !peer) return;
+        const myIndex = standings.findIndex(s => s.id === peer.id || s.peerId === peer.id);
+        if (myIndex !== -1 && popcatPlayerRank) {
+            const rank = myIndex + 1;
+            popcatPlayerRank.textContent = `# ${rank}`;
+            if (rank === 1) {
+                popcatPlayerRank.style.color = 'var(--neon-gold)';
+            } else if (rank === 2) {
+                popcatPlayerRank.style.color = '#c0c0c0';
+            } else if (rank === 3) {
+                popcatPlayerRank.style.color = '#cd7f32';
+            } else {
+                popcatPlayerRank.style.color = 'var(--accent)';
+            }
+        }
+    }
+
+    function sendPopcatPop(tier) {
+        const pps = updatePopcatPps();
+        if (hostConnection && hostConnection.open) {
+            hostConnection.send({
+                type: 'POPCAT_POP',
+                score: popcatScore,
+                tier: tier,
+                pps: pps,
+                isOpen: true
+            });
+        }
+    }
+
+    function sendPopcatRelease() {
+        const pps = updatePopcatPps();
+        if (hostConnection && hostConnection.open) {
+            hostConnection.send({
+                type: 'POPCAT_RELEASE',
+                score: popcatScore,
+                tier: popcatScore > 100 ? 2 : 1,
+                pps: pps,
+                isOpen: false
+            });
+        }
+    }
+
+    function sendPopcatTelemetry() {
+        if (!gameActive) return;
+        const pps = updatePopcatPps();
+        if (hostConnection && hostConnection.open) {
+            hostConnection.send({
+                type: 'POPCAT_TELEMETRY',
+                score: popcatScore,
+                tier: popcatScore > 100 ? 2 : 1,
+                pps: pps,
+                isOpen: popcatIsPopping
+            });
+        }
+    }
+
+    function playPopcatAudio(tier = 1) {
+        try {
+            const audioCtx = getPlayerAudioContext();
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            const now = audioCtx.currentTime;
+
+            if (tier > 1) {
+                // Tier 2: Punchy Pop with high harmonics
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(540, now);
+                osc.frequency.exponentialRampToValueAtTime(130, now + 0.08);
+                gain.gain.setValueAtTime(0.35, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+                osc.start(now);
+                osc.stop(now + 0.08);
+            } else {
+                // Tier 1: Classic PopCat "POP"
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(420, now);
+                osc.frequency.exponentialRampToValueAtTime(110, now + 0.07);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+                osc.start(now);
+                osc.stop(now + 0.07);
+            }
+        } catch (e) {}
     }
 
     // === 7. GAME 2: FAST BUZZ! PLAYER LOGIC ===

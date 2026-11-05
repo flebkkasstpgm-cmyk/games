@@ -240,6 +240,43 @@
             </div>
         </section>
 
+        <!-- 4.5. CONTROLLER SCREEN: POPCAT BATTLE (รัวนิ้วเคาะแมวอ้าปาก) -->
+        <section id="screen-controller-popcat" class="screen">
+            <div class="game-header">
+                <div class="room-indicator">ผู้เล่น: <span class="my-nickname-span">-</span></div>
+                <div class="game-state-text" id="popcat-player-announcement">เตรียมรัวนิ้วเคาะแมว PopCat!</div>
+                <div class="game-timer" id="popcat-player-timer">60s</div>
+            </div>
+
+            <div class="card" style="padding: 10px; margin-bottom: 8px;">
+                <div class="controller-stats" style="grid-template-columns: repeat(3, 1fr);">
+                    <div class="stat-box">
+                        <span class="stat-label">ความเร็วเคาะ</span>
+                        <span class="stat-val" id="popcat-player-pps" style="color: var(--neon-gold);">0 <small>pps</small></span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">อันดับสด</span>
+                        <span class="stat-val" id="popcat-player-rank"># -</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">จำนวนครั้งที่เคาะ</span>
+                        <span class="stat-val" id="popcat-player-score" style="color: var(--accent);">0</span>
+                    </div>
+                </div>
+                <div id="popcat-tier-badge" class="popcat-tier-badge">🐱 ขั้น 1: เคาะเปิดปากปกติ (เป้าหมาย 100 ครั้งเพื่อเปลี่ยนร่าง!)</div>
+            </div>
+
+            <!-- พื้นที่เคาะแมวยักษ์ (Touch/Click Optimized) -->
+            <div class="popcat-interactive-area" id="popcat-interactive-area">
+                <div class="popcat-img-wrapper" id="popcat-img-wrapper">
+                    <img id="popcat-img" src="cat_normal.png" alt="PopCat" draggable="false">
+                </div>
+                <div class="popcat-touch-hint" id="popcat-touch-hint">👆 แตะหรือรัวหลายนิ้วที่ตัวแมวเพื่อ POP!</div>
+                <!-- เลเยอร์ตัวเลขคะแนนลอย -->
+                <div id="popcat-floating-layer" class="popcat-floating-layer"></div>
+            </div>
+        </section>
+
         <!-- 5. CONTROLLER SCREEN: FAST BUZZ! (แย่งกันกดสัญญาณ) -->
         <section id="screen-controller-buzz" class="screen">
             <div class="game-header">

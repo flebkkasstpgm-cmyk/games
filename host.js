@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
         galaga: document.getElementById('screen-game-galaga'),
         buzz: document.getElementById('screen-game-buzz'),
         wheel: document.getElementById('screen-game-wheel'),
+        popcat: document.getElementById('screen-game-popcat'),
         result: document.getElementById('screen-result')
     };
 
@@ -68,6 +69,27 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('galaga-canvas-2')
     ];
     const galagaStageContexts = galagaStageCanvases.map(c => c ? c.getContext('2d') : null);
+
+    // PopCat Battle Elements (Live Top 3 Stages)
+    const popcatTimer = document.getElementById('popcat-timer');
+    const popcatAnnouncement = document.getElementById('popcat-announcement');
+    const popcatLeaderboard = document.getElementById('popcat-leaderboard-list');
+    const popcatStageNames = [
+        document.getElementById('popcat-stage-name-0'),
+        document.getElementById('popcat-stage-name-1'),
+        document.getElementById('popcat-stage-name-2')
+    ];
+    const popcatStageScores = [
+        document.getElementById('popcat-stage-score-0'),
+        document.getElementById('popcat-stage-score-1'),
+        document.getElementById('popcat-stage-score-2')
+    ];
+    const popcatStageCanvases = [
+        document.getElementById('popcat-canvas-0'),
+        document.getElementById('popcat-canvas-1'),
+        document.getElementById('popcat-canvas-2')
+    ];
+    const popcatStageContexts = popcatStageCanvases.map(c => c ? c.getContext('2d') : null);
 
     // Fast Buzz Elements
     const buzzAnnouncement = document.getElementById('buzz-announcement');
@@ -155,6 +177,36 @@ document.addEventListener('DOMContentLoaded', () => {
         { type: 'friendly', symbol: '👨‍🚀', name: 'Friendly Astronaut', color: '#38ef7d', hp: 1, points: -30, speed: 0.13, weight: 16, isFriendly: true },
         { type: 'mine', symbol: '💣', name: 'Space Mine', color: '#ff0844', hp: 1, points: -20, speed: 0.15, weight: 14, isMine: true }
     ];
+
+    // PopCat Battle Game Variables (Host Side)
+    let popcatCountdownInterval = null;
+    let popcatTimerInterval = null;
+    let popcatAnimId = null;
+    let popcatLastStandingsBroadcast = 0;
+    let popcatStagesState = [
+        { popScale: 1.0, floatingTexts: [], particles: [] },
+        { popScale: 1.0, floatingTexts: [], particles: [] },
+        { popScale: 1.0, floatingTexts: [], particles: [] }
+    ];
+
+    // โหลดรูปภาพ PopCat ฝั่งโฮสต์เพื่อวาดลง Canvas ถ่ายทอดสด
+    const popcatHostImages = {
+        normal: new Image(),
+        open1: new Image(),
+        open2: new Image(),
+        loaded: false
+    };
+    popcatHostImages.normal.src = 'cat_normal.png';
+    popcatHostImages.open1.src = 'cat_open1.png';
+    popcatHostImages.open2.src = 'cat_open2.png';
+    let popcatHostLoadedImgs = 0;
+    const onHostCatImgLoad = () => {
+        popcatHostLoadedImgs++;
+        if (popcatHostLoadedImgs >= 3) popcatHostImages.loaded = true;
+    };
+    popcatHostImages.normal.onload = onHostCatImgLoad;
+    popcatHostImages.open1.onload = onHostCatImgLoad;
+    popcatHostImages.open2.onload = onHostCatImgLoad;
 
     // Fast Buzz Game Variables
     let buzzQueue = []; // Array of { peerId, nickname, delta }
@@ -363,6 +415,9 @@ document.addEventListener('DOMContentLoaded', () => {
             clearInterval(galagaCountdownInterval);
             clearInterval(galagaTimerInterval);
             if (galagaAnimId) cancelAnimationFrame(galagaAnimId);
+            clearInterval(popcatCountdownInterval);
+            clearInterval(popcatTimerInterval);
+            if (popcatAnimId) cancelAnimationFrame(popcatAnimId);
             if (wheelAnimationFrame) cancelAnimationFrame(wheelAnimationFrame);
             stopGraphicsLoop();
 
@@ -405,6 +460,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     canvas.width = rect.width * dpr;
                     canvas.height = rect.height * dpr;
                     const ctx = galagaStageContexts[idx];
+                    if (ctx) ctx.scale(dpr, dpr);
+                }
+            });
+        } else if (activeGameMode === 'popcat') {
+            popcatStageCanvases.forEach((canvas, idx) => {
+                if (canvas) {
+                    const rect = canvas.getBoundingClientRect();
+                    const dpr = window.devicePixelRatio || 1;
+                    canvas.width = rect.width * dpr;
+                    canvas.height = rect.height * dpr;
+                    const ctx = popcatStageContexts[idx];
                     if (ctx) ctx.scale(dpr, dpr);
                 }
             });
@@ -456,6 +522,25 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Throttled Leaderboard Updates เพื่อป้องกัน DOM Layout Thrashing & Frame Drops เมื่อมีผู้เล่นจำนวนมาก
+    const lastLeaderboardUpdateTimes = {
+        rocket: 0,
+        catch: 0,
+        galaga: 0,
+        popcat: 0
+    };
+
+    function requestThrottledLeaderboard(game) {
+        const now = performance.now();
+        if (now - (lastLeaderboardUpdateTimes[game] || 0) >= 200) { // จำกัดไม่เกิน 5 ครั้ง/วินาที (5 FPS สำหรับ DOM)
+            lastLeaderboardUpdateTimes[game] = now;
+            if (game === 'rocket') updateRocketLeaderboard();
+            else if (game === 'catch') updateCatchLeaderboard();
+            else if (game === 'galaga') updateGalagaLeaderboard();
+            else if (game === 'popcat') updatePopcatLeaderboard();
+        }
+    }
+
     function handleIncomingMessage(senderPeerId, data) {
         if (data.type === 'JOIN') {
             // ถ้ารายชื่อเต็ม 120 คน
@@ -472,8 +557,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     score: 0,
                     combo: 0,
                     basketX: 0.5,
+                    currentBasketX: 0.5,
                     shipX: 0.5,
+                    currentShipX: 0.5,
                     dualFighter: false,
+                    catchItems: [],
+                    galagaEnemies: [],
+                    galagaLasers: [],
+                    floatingTexts: [],
+                    particles: [],
                     ready: true,
                     scores: { rocket: 0, catch: 0, galaga: 0, buzz: 0 }
                 };
@@ -486,26 +578,148 @@ document.addEventListener('DOMContentLoaded', () => {
             if (players[senderPeerId]) {
                 players[senderPeerId].progress = data.progress;
                 createJetSparks(senderPeerId, 3);
-                updateRocketLeaderboard();
+                requestThrottledLeaderboard('rocket');
             }
         }
         else if (data.type === 'CATCH_UPDATE') {
             if (!gameActive || activeGameMode !== 'catch') return;
-            if (players[senderPeerId]) {
-                players[senderPeerId].basketX = data.basketX;
-                players[senderPeerId].score = data.score;
-                players[senderPeerId].combo = data.combo;
-                updateCatchLeaderboard();
+            const p = players[senderPeerId];
+            if (p) {
+                p.basketX = typeof data.basketX === 'number' ? data.basketX : (p.basketX || 0.5);
+                if (typeof p.currentBasketX !== 'number') p.currentBasketX = p.basketX;
+                p.score = typeof data.score === 'number' ? data.score : (p.score || 0);
+                p.combo = typeof data.combo === 'number' ? data.combo : (p.combo || 0);
+
+                if (Array.isArray(data.items)) {
+                    p.catchItems = data.items.map(it => ({
+                        x: it.x,
+                        y: it.y,
+                        speed: it.speed || 0.35,
+                        rot: it.rot || 0,
+                        rotSpeed: it.rotSpeed || 0,
+                        symbol: it.symbol || '🪙',
+                        color: it.color || '#ffcc00'
+                    }));
+                }
+
+                if (Array.isArray(data.events) && data.events.length > 0) {
+                    if (!p.floatingTexts) p.floatingTexts = [];
+                    data.events.forEach(ev => {
+                        const ex = typeof ev.x === 'number' ? ev.x : (p.basketX || 0.5);
+                        const ey = typeof ev.y === 'number' ? ev.y : 0.80;
+                        const ec = ev.color || '#00f0ff';
+                        p.floatingTexts.push({
+                            x: ex,
+                            y: ey,
+                            text: ev.text || '',
+                            color: ec,
+                            alpha: 1.0
+                        });
+                        spawnPlayerParticles(p, ex, 0.85, ec, 8);
+                    });
+                }
+                requestThrottledLeaderboard('catch');
             }
         }
         else if (data.type === 'GALAGA_UPDATE') {
             if (!gameActive || activeGameMode !== 'galaga') return;
-            if (players[senderPeerId]) {
-                players[senderPeerId].shipX = data.shipX;
-                players[senderPeerId].score = data.score;
-                players[senderPeerId].combo = data.combo;
-                players[senderPeerId].dualFighter = data.dualFighter;
-                updateGalagaLeaderboard();
+            const p = players[senderPeerId];
+            if (p) {
+                p.shipX = typeof data.shipX === 'number' ? data.shipX : (p.shipX || 0.5);
+                if (typeof p.currentShipX !== 'number') p.currentShipX = p.shipX;
+                p.score = typeof data.score === 'number' ? data.score : (p.score || 0);
+                p.combo = typeof data.combo === 'number' ? data.combo : (p.combo || 0);
+                p.dualFighter = !!data.dualFighter;
+
+                if (Array.isArray(data.enemies)) {
+                    p.galagaEnemies = data.enemies.map(e => ({
+                        x: e.x,
+                        y: e.y,
+                        speed: e.speed || 0.2,
+                        swoopOffset: e.swoopOffset || 0,
+                        symbol: e.symbol || '👾',
+                        color: e.color || '#00f0ff',
+                        type: e.type || 'drone',
+                        isFriendly: !!e.isFriendly,
+                        isMine: !!e.isMine
+                    }));
+                }
+
+                if (Array.isArray(data.lasers)) {
+                    p.galagaLasers = data.lasers.map(l => ({
+                        x: l.x,
+                        y: l.y,
+                        speed: l.speed || 1.3,
+                        color: l.color || '#ff3366'
+                    }));
+                }
+
+                if (Array.isArray(data.events) && data.events.length > 0) {
+                    if (!p.floatingTexts) p.floatingTexts = [];
+                    data.events.forEach(ev => {
+                        const ex = typeof ev.x === 'number' ? ev.x : (p.shipX || 0.5);
+                        const ey = typeof ev.y === 'number' ? ev.y : 0.70;
+                        const ec = ev.color || '#00f0ff';
+                        p.floatingTexts.push({
+                            x: ex,
+                            y: ey,
+                            text: ev.text || '',
+                            color: ec,
+                            alpha: 1.0
+                        });
+                        spawnPlayerGalagaParticles(p, ex, ey, ec, 8);
+                    });
+                }
+                requestThrottledLeaderboard('galaga');
+            }
+        }
+        else if (data.type === 'POPCAT_POP') {
+            if (!gameActive || activeGameMode !== 'popcat') return;
+            const p = players[senderPeerId];
+            if (p) {
+                p.score = typeof data.score === 'number' ? data.score : (p.score || 0) + 1;
+                p.pps = typeof data.pps === 'number' ? data.pps : (p.pps || 0);
+                p.tier = typeof data.tier === 'number' ? data.tier : (p.score > 100 ? 2 : 1);
+                p.isOpen = true;
+                p.lastPopTime = Date.now();
+                p.popScale = 0.88;
+
+                if (!p.floatingTexts) p.floatingTexts = [];
+                const signX = (Math.random() - 0.5) * 0.28;
+                p.floatingTexts.push({
+                    x: 0.5 + signX,
+                    y: 0.50,
+                    vx: signX * 0.35,
+                    vy: -(0.55 + Math.random() * 0.3),
+                    text: p.tier === 2 ? '+1 🔥' : '+1',
+                    color: p.tier === 2 ? '#ff0077' : '#ffcc00',
+                    alpha: 1.0,
+                    size: p.tier === 2 ? 26 : 20,
+                    created: Date.now()
+                });
+                if (p.floatingTexts.length > 25) p.floatingTexts.shift();
+
+                requestThrottledLeaderboard('popcat');
+            }
+        }
+        else if (data.type === 'POPCAT_RELEASE') {
+            if (!gameActive || activeGameMode !== 'popcat') return;
+            const p = players[senderPeerId];
+            if (p) {
+                p.isOpen = false;
+                if (typeof data.score === 'number') p.score = data.score;
+                if (typeof data.pps === 'number') p.pps = data.pps;
+            }
+        }
+        else if (data.type === 'POPCAT_TELEMETRY') {
+            if (!gameActive || activeGameMode !== 'popcat') return;
+            const p = players[senderPeerId];
+            if (p) {
+                if (typeof data.score === 'number') p.score = data.score;
+                if (typeof data.pps === 'number') p.pps = data.pps;
+                if (typeof data.tier === 'number') p.tier = data.tier;
+                p.isOpen = !!data.isOpen;
+                requestThrottledLeaderboard('popcat');
             }
         }
         else if (data.type === 'BUZZ_PRESS') {
@@ -571,6 +785,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (activeGameMode === 'buzz') {
             showScreen('buzz');
             startBuzzGame();
+        } else if (activeGameMode === 'popcat') {
+            showScreen('popcat');
+            startPopcatCountdown();
         } else if (activeGameMode === 'wheel') {
             showScreen('wheel');
             startWheelGame();
@@ -713,8 +930,12 @@ document.addEventListener('DOMContentLoaded', () => {
         // Reset player catch values
         Object.keys(players).forEach(id => {
             players[id].basketX = 0.5;
+            players[id].currentBasketX = 0.5;
             players[id].score = 0;
             players[id].combo = 0;
+            players[id].catchItems = [];
+            players[id].floatingTexts = [];
+            players[id].particles = [];
             if (!players[id].scores) players[id].scores = {};
             players[id].scores.catch = 0;
         });
@@ -825,34 +1046,22 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function spawnHostCatchItem() {
-        if (!catchPrng) return;
-        const totalWeight = CATCH_ITEM_TYPES.reduce((acc, t) => acc + t.weight, 0);
-        let randVal = catchPrng() * totalWeight;
-        let selectedType = CATCH_ITEM_TYPES[0];
-        for (const itemType of CATCH_ITEM_TYPES) {
-            if (randVal < itemType.weight) {
-                selectedType = itemType;
-                break;
-            }
-            randVal -= itemType.weight;
+    function spawnPlayerParticles(player, x, y, color, count = 8) {
+        if (!player) return;
+        if (!player.particles) player.particles = [];
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 0.15 + Math.random() * 0.35;
+            player.particles.push({
+                x: x,
+                y: y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed - 0.2,
+                color: color,
+                size: 3 + Math.random() * 4,
+                alpha: 1.0
+            });
         }
-
-        const normX = 0.12 + catchPrng() * 0.76;
-        catchItems.push({
-            id: catchItemNextId++,
-            type: selectedType.type,
-            symbol: selectedType.symbol,
-            color: selectedType.color,
-            points: selectedType.points,
-            comboInc: selectedType.comboInc,
-            isBad: !!selectedType.isBad,
-            x: normX,
-            y: -0.06,
-            speed: selectedType.speed + (catchPrng() * 0.08 - 0.04),
-            rot: 0,
-            rotSpeed: (catchPrng() - 0.5) * 3
-        });
     }
 
     function startCatchStagesLoop() {
@@ -868,31 +1077,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const dt = Math.min(0.1, (timestamp - lastTime) / 1000);
             lastTime = timestamp;
 
-            // Spawn items according to host PRNG
-            catchSpawnTimer += dt;
-            if (catchSpawnTimer > 0.65) {
-                spawnHostCatchItem();
-                catchSpawnTimer = 0;
-            }
-
-            // Update host falling items
-            for (let i = catchItems.length - 1; i >= 0; i--) {
-                const item = catchItems[i];
-                item.y += item.speed * dt;
-                item.rot += item.rotSpeed * dt;
-                if (item.y > 1.1) {
-                    catchItems.splice(i, 1);
-                }
-            }
-
             // Get Top 3 Players
-            const sortedPlayers = Object.keys(players).map(id => ({
-                id,
-                nickname: players[id].nickname,
-                score: players[id].score || 0,
-                combo: players[id].combo || 0,
-                basketX: typeof players[id].basketX === 'number' ? players[id].basketX : 0.5
-            })).sort((a, b) => b.score - a.score);
+            const sortedPlayers = Object.keys(players)
+                .map(id => players[id])
+                .sort((a, b) => (b.score || 0) - (a.score || 0));
 
             // Render each of the 3 stages
             for (let stageIdx = 0; stageIdx < 3; stageIdx++) {
@@ -907,53 +1095,51 @@ document.addEventListener('DOMContentLoaded', () => {
                 const scoreLabel = stageScores[stageIdx];
 
                 if (player) {
-                    if (nameLabel) nameLabel.textContent = player.nickname;
-                    if (scoreLabel) scoreLabel.textContent = `${player.score} pts (x${player.combo})`;
+                    if (nameLabel) nameLabel.textContent = player.nickname || 'นักแข่ง';
+                    if (scoreLabel) scoreLabel.textContent = `${player.score || 0} pts (x${player.combo || 0})`;
 
-                    if (player.score !== stageState.lastScore) {
-                        const diff = player.score - stageState.lastScore;
-                        if (diff > 0) {
-                            stageState.floatingTexts.push({
-                                x: stageState.currentBasketX,
-                                y: 0.80,
-                                text: `+${diff}`,
-                                color: '#00f0ff',
-                                alpha: 1.0
-                            });
-                            spawnStageParticles(stageState, stageState.currentBasketX, 0.85, '#00f0ff', 6);
-                        } else if (diff < 0) {
-                            stageState.floatingTexts.push({
-                                x: stageState.currentBasketX,
-                                y: 0.80,
-                                text: `${diff} 💥`,
-                                color: '#ff0055',
-                                alpha: 1.0
-                            });
-                            spawnStageParticles(stageState, stageState.currentBasketX, 0.85, '#ff0055', 8);
-                        }
-                        stageState.lastScore = player.score;
+                    if (typeof player.currentBasketX !== 'number') {
+                        player.currentBasketX = typeof player.basketX === 'number' ? player.basketX : 0.5;
+                    } else {
+                        const targetBasketX = typeof player.basketX === 'number' ? player.basketX : 0.5;
+                        player.currentBasketX += (targetBasketX - player.currentBasketX) * 0.35;
                     }
 
-                    stageState.currentBasketX += (player.basketX - stageState.currentBasketX) * 0.35;
+                    // Advance player's real items at 60 FPS
+                    if (player.catchItems && player.catchItems.length > 0) {
+                        for (let i = player.catchItems.length - 1; i >= 0; i--) {
+                            const item = player.catchItems[i];
+                            item.y += (item.speed || 0.35) * dt;
+                            item.rot += (item.rotSpeed || 0) * dt;
+                            if (item.y > 1.1) {
+                                player.catchItems.splice(i, 1);
+                            }
+                        }
+                    }
+
+                    // Update player's floating texts
+                    if (player.floatingTexts && player.floatingTexts.length > 0) {
+                        for (let j = player.floatingTexts.length - 1; j >= 0; j--) {
+                            const ft = player.floatingTexts[j];
+                            ft.y -= 0.12 * dt;
+                            ft.alpha -= 1.2 * dt;
+                            if (ft.alpha <= 0) player.floatingTexts.splice(j, 1);
+                        }
+                    }
+
+                    // Update player's particles
+                    if (player.particles && player.particles.length > 0) {
+                        for (let j = player.particles.length - 1; j >= 0; j--) {
+                            const p = player.particles[j];
+                            p.x += p.vx * dt;
+                            p.y += p.vy * dt;
+                            p.alpha -= 1.5 * dt;
+                            if (p.alpha <= 0) player.particles.splice(j, 1);
+                        }
+                    }
                 } else {
                     if (nameLabel) nameLabel.textContent = 'รอผู้แข่งขัน...';
                     if (scoreLabel) scoreLabel.textContent = '0 pts';
-                }
-
-                // Update stage floating texts & particles
-                for (let j = stageState.floatingTexts.length - 1; j >= 0; j--) {
-                    const ft = stageState.floatingTexts[j];
-                    ft.y -= 0.12 * dt;
-                    ft.alpha -= 1.2 * dt;
-                    if (ft.alpha <= 0) stageState.floatingTexts.splice(j, 1);
-                }
-
-                for (let j = stageState.particles.length - 1; j >= 0; j--) {
-                    const p = stageState.particles[j];
-                    p.x += p.vx * dt;
-                    p.y += p.vy * dt;
-                    p.alpha -= 1.5 * dt;
-                    if (p.alpha <= 0) stageState.particles.splice(j, 1);
                 }
 
                 drawCatchStageCanvas(ctx, canvas, stageIdx, player, stageState);
@@ -963,22 +1149,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         catchAnimId = requestAnimationFrame(renderStagesLoop);
-    }
-
-    function spawnStageParticles(stageState, x, y, color, count = 6) {
-        for (let i = 0; i < count; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const speed = 0.15 + Math.random() * 0.3;
-            stageState.particles.push({
-                x: x,
-                y: y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed - 0.15,
-                color: color,
-                size: 2.5 + Math.random() * 3,
-                alpha: 1.0
-            });
-        }
     }
 
     function drawCatchStageCanvas(ctx, canvas, stageIdx, player, stageState) {
@@ -1021,30 +1191,32 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.lineWidth = 2;
         ctx.strokeRect(0, 0, w, h);
 
-        // 2. Falling Items (Shared Simulation)
-        catchItems.forEach(item => {
-            const ix = item.x * w;
-            const iy = item.y * h;
-            const itemSize = Math.max(22, w * 0.075);
-
-            ctx.save();
-            ctx.translate(ix, iy);
-            ctx.rotate(item.rot);
-
-            ctx.shadowColor = item.color;
-            ctx.shadowBlur = 10;
-
-            ctx.font = `${Math.round(itemSize)}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(item.symbol, 0, 0);
-
-            ctx.restore();
-        });
-
         if (player) {
+            // 2. Real Falling Items from player
+            const items = player.catchItems || [];
+            items.forEach(item => {
+                const ix = item.x * w;
+                const iy = item.y * h;
+                const itemSize = Math.max(22, w * 0.075);
+
+                ctx.save();
+                ctx.translate(ix, iy);
+                ctx.rotate(item.rot || 0);
+
+                ctx.shadowColor = item.color || '#ffcc00';
+                ctx.shadowBlur = 10;
+
+                ctx.font = `${Math.round(itemSize)}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(item.symbol || '🪙', 0, 0);
+
+                ctx.restore();
+            });
+
             // 3. Basket for this player
-            const bx = stageState.currentBasketX * w;
+            const currentX = typeof player.currentBasketX === 'number' ? player.currentBasketX : 0.5;
+            const bx = currentX * w;
             const by = 0.85 * h;
             const bw = w * 0.24;
             const bh = Math.max(14, h * 0.045);
@@ -1071,31 +1243,33 @@ document.addEventListener('DOMContentLoaded', () => {
             ctx.fillStyle = '#ffffff';
             ctx.font = 'bold 11px Inter, sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText(player.nickname, bx, by - 5);
+            ctx.fillText(player.nickname || '', bx, by - 5);
             ctx.restore();
 
             // 4. Floating texts
-            stageState.floatingTexts.forEach(ft => {
+            const floatingTexts = player.floatingTexts || [];
+            floatingTexts.forEach(ft => {
                 ctx.save();
                 ctx.globalAlpha = Math.max(0, ft.alpha);
                 ctx.fillStyle = ft.color;
                 ctx.shadowColor = ft.color;
                 ctx.shadowBlur = 8;
-                ctx.font = 'bold 14px Inter, sans-serif';
+                ctx.font = 'bold 14px Chakra Petch, sans-serif';
                 ctx.textAlign = 'center';
                 ctx.fillText(ft.text, ft.x * w, ft.y * h);
                 ctx.restore();
             });
 
             // 5. Particles
-            stageState.particles.forEach(p => {
+            const particles = player.particles || [];
+            particles.forEach(p => {
                 ctx.save();
                 ctx.globalAlpha = Math.max(0, p.alpha);
                 ctx.fillStyle = p.color;
                 ctx.shadowColor = p.color;
                 ctx.shadowBlur = 6;
                 ctx.beginPath();
-                ctx.arc(p.x * w, p.y * h, p.size, 0, Math.PI * 2);
+                ctx.arc(p.x * w, p.y * h, p.size || 2.5, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.restore();
             });
@@ -1166,9 +1340,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // Reset player values
         Object.keys(players).forEach(id => {
             players[id].shipX = 0.5;
+            players[id].currentShipX = 0.5;
             players[id].score = 0;
             players[id].combo = 0;
             players[id].dualFighter = false;
+            players[id].galagaEnemies = [];
+            players[id].galagaLasers = [];
+            players[id].floatingTexts = [];
+            players[id].particles = [];
             if (!players[id].scores) players[id].scores = {};
             players[id].scores.galaga = 0;
         });
@@ -1300,38 +1479,22 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function spawnHostGalagaEnemy() {
-        if (!galagaPrng) return;
-        const totalWeight = GALAGA_ENEMY_TYPES.reduce((acc, t) => acc + t.weight, 0);
-        let randVal = galagaPrng() * totalWeight;
-        let selected = GALAGA_ENEMY_TYPES[0];
-        for (const t of GALAGA_ENEMY_TYPES) {
-            if (randVal < t.weight) {
-                selected = t;
-                break;
-            }
-            randVal -= t.weight;
+    function spawnPlayerGalagaParticles(player, x, y, color, count = 8) {
+        if (!player) return;
+        if (!player.particles) player.particles = [];
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 0.18 + Math.random() * 0.4;
+            player.particles.push({
+                x: x,
+                y: y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                color: color,
+                size: 2.5 + Math.random() * 3.5,
+                alpha: 1.0
+            });
         }
-
-        const normX = 0.1 + galagaPrng() * 0.8;
-        galagaEnemies.push({
-            id: galagaNextEnemyId++,
-            type: selected.type,
-            name: selected.name,
-            symbol: selected.symbol,
-            color: selected.color,
-            hp: selected.hp,
-            maxHp: selected.hp,
-            points: selected.points,
-            speed: selected.speed + (galagaPrng() * 0.05 - 0.025),
-            isPowerUp: !!selected.isPowerUp,
-            isFriendly: !!selected.isFriendly,
-            isMine: !!selected.isMine,
-            x: normX,
-            y: -0.08,
-            swoopOffset: galagaPrng() * Math.PI * 2,
-            rot: 0
-        });
     }
 
     function startGalagaStagesLoop() {
@@ -1347,31 +1510,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const dt = Math.min(0.1, (timestamp - lastTime) / 1000);
             lastTime = timestamp;
 
-            galagaSpawnTimer += dt;
-            if (galagaSpawnTimer > 0.55) {
-                spawnHostGalagaEnemy();
-                galagaSpawnTimer = 0;
-            }
-
-            for (let i = galagaEnemies.length - 1; i >= 0; i--) {
-                const enemy = galagaEnemies[i];
-                enemy.y += enemy.speed * dt;
-                enemy.x += Math.sin(enemy.y * 7 + enemy.swoopOffset) * 0.15 * dt;
-                enemy.x = Math.max(0.08, Math.min(0.92, enemy.x));
-
-                if (enemy.y > 1.1) {
-                    galagaEnemies.splice(i, 1);
-                }
-            }
-
-            const sortedPlayers = Object.keys(players).map(id => ({
-                id,
-                nickname: players[id].nickname,
-                score: players[id].score || 0,
-                combo: players[id].combo || 0,
-                dualFighter: !!players[id].dualFighter,
-                shipX: typeof players[id].shipX === 'number' ? players[id].shipX : 0.5
-            })).sort((a, b) => b.score - a.score);
+            const sortedPlayers = Object.keys(players)
+                .map(id => players[id])
+                .sort((a, b) => (b.score || 0) - (a.score || 0));
 
             for (let stageIdx = 0; stageIdx < 3; stageIdx++) {
                 const player = sortedPlayers[stageIdx];
@@ -1385,71 +1526,63 @@ document.addEventListener('DOMContentLoaded', () => {
                 const scoreLabel = galagaStageScores[stageIdx];
 
                 if (player) {
-                    if (nameLabel) nameLabel.textContent = player.nickname;
+                    if (nameLabel) nameLabel.textContent = player.nickname || 'นักบิน';
                     const dualTag = player.dualFighter ? ' [DUAL]' : '';
-                    if (scoreLabel) scoreLabel.textContent = `${player.score} pts (x${player.combo})${dualTag}`;
+                    if (scoreLabel) scoreLabel.textContent = `${player.score || 0} pts (x${player.combo || 0})${dualTag}`;
 
-                    if (player.score !== stageState.lastScore) {
-                        const diff = player.score - stageState.lastScore;
-                        if (diff > 0) {
-                            stageState.floatingTexts.push({
-                                x: stageState.currentShipX,
-                                y: 0.70,
-                                text: `+${diff}`,
-                                color: '#00f0ff',
-                                alpha: 1.0
-                            });
-                            spawnHostGalagaParticles(stageState, stageState.currentShipX, 0.65, '#00f0ff', 6);
-                        } else if (diff < 0) {
-                            stageState.floatingTexts.push({
-                                x: stageState.currentShipX,
-                                y: 0.70,
-                                text: `${diff} 💥`,
-                                color: '#ff0055',
-                                alpha: 1.0
-                            });
-                            spawnHostGalagaParticles(stageState, stageState.currentShipX, 0.84, '#ff0055', 8);
-                        }
-                        stageState.lastScore = player.score;
+                    if (typeof player.currentShipX !== 'number') {
+                        player.currentShipX = typeof player.shipX === 'number' ? player.shipX : 0.5;
+                    } else {
+                        const targetShipX = typeof player.shipX === 'number' ? player.shipX : 0.5;
+                        player.currentShipX += (targetShipX - player.currentShipX) * 0.38;
                     }
 
-                    stageState.currentShipX += (player.shipX - stageState.currentShipX) * 0.38;
-                    stageState.dualFighter = player.dualFighter;
+                    // Advance player's real enemies at 60 FPS
+                    if (player.galagaEnemies && player.galagaEnemies.length > 0) {
+                        for (let i = player.galagaEnemies.length - 1; i >= 0; i--) {
+                            const enemy = player.galagaEnemies[i];
+                            enemy.y += (enemy.speed || 0.2) * dt;
+                            enemy.x += Math.sin(enemy.y * 7 + (enemy.swoopOffset || 0)) * 0.15 * dt;
+                            enemy.x = Math.max(0.08, Math.min(0.92, enemy.x));
 
-                    stageState.laserCooldown -= dt;
-                    if (stageState.laserCooldown <= 0) {
-                        stageState.laserCooldown = 0.16;
-                        if (stageState.dualFighter) {
-                            stageState.lasers.push({ x: stageState.currentShipX - 0.045, y: 0.82, speed: 1.3, color: '#00ffff' });
-                            stageState.lasers.push({ x: stageState.currentShipX + 0.045, y: 0.82, speed: 1.3, color: '#00ffff' });
-                        } else {
-                            stageState.lasers.push({ x: stageState.currentShipX, y: 0.82, speed: 1.3, color: '#ff3366' });
+                            if (enemy.y > 1.1) {
+                                player.galagaEnemies.splice(i, 1);
+                            }
+                        }
+                    }
+
+                    // Advance player's real lasers at 60 FPS
+                    if (player.galagaLasers && player.galagaLasers.length > 0) {
+                        for (let j = player.galagaLasers.length - 1; j >= 0; j--) {
+                            const l = player.galagaLasers[j];
+                            l.y -= (l.speed || 1.3) * dt;
+                            if (l.y < -0.05) player.galagaLasers.splice(j, 1);
+                        }
+                    }
+
+                    // Update player's floating texts
+                    if (player.floatingTexts && player.floatingTexts.length > 0) {
+                        for (let j = player.floatingTexts.length - 1; j >= 0; j--) {
+                            const ft = player.floatingTexts[j];
+                            ft.y -= 0.12 * dt;
+                            ft.alpha -= 1.2 * dt;
+                            if (ft.alpha <= 0) player.floatingTexts.splice(j, 1);
+                        }
+                    }
+
+                    // Update player's particles
+                    if (player.particles && player.particles.length > 0) {
+                        for (let j = player.particles.length - 1; j >= 0; j--) {
+                            const p = player.particles[j];
+                            p.x += p.vx * dt;
+                            p.y += p.vy * dt;
+                            p.alpha -= 1.6 * dt;
+                            if (p.alpha <= 0) player.particles.splice(j, 1);
                         }
                     }
                 } else {
                     if (nameLabel) nameLabel.textContent = 'รอนักบิน...';
                     if (scoreLabel) scoreLabel.textContent = '0 pts';
-                }
-
-                for (let j = stageState.lasers.length - 1; j >= 0; j--) {
-                    const l = stageState.lasers[j];
-                    l.y -= l.speed * dt;
-                    if (l.y < -0.05) stageState.lasers.splice(j, 1);
-                }
-
-                for (let j = stageState.floatingTexts.length - 1; j >= 0; j--) {
-                    const ft = stageState.floatingTexts[j];
-                    ft.y -= 0.12 * dt;
-                    ft.alpha -= 1.2 * dt;
-                    if (ft.alpha <= 0) stageState.floatingTexts.splice(j, 1);
-                }
-
-                for (let j = stageState.particles.length - 1; j >= 0; j--) {
-                    const p = stageState.particles[j];
-                    p.x += p.vx * dt;
-                    p.y += p.vy * dt;
-                    p.alpha -= 1.6 * dt;
-                    if (p.alpha <= 0) stageState.particles.splice(j, 1);
                 }
 
                 drawGalagaStageCanvas(ctx, canvas, stageIdx, player, stageState, dt);
@@ -1459,22 +1592,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         galagaAnimId = requestAnimationFrame(renderStagesLoop);
-    }
-
-    function spawnHostGalagaParticles(stageState, x, y, color, count = 6) {
-        for (let i = 0; i < count; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const speed = 0.15 + Math.random() * 0.35;
-            stageState.particles.push({
-                x: x,
-                y: y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                color: color,
-                size: 2 + Math.random() * 3,
-                alpha: 1.0
-            });
-        }
     }
 
     function drawGalagaStageCanvas(ctx, canvas, stageIdx, player, stageState, dt) {
@@ -1517,55 +1634,61 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.lineWidth = 2;
         ctx.strokeRect(0, 0, w, h);
 
-        galagaEnemies.forEach(e => {
-            const ex = e.x * w;
-            const ey = e.y * h;
-            const eSize = e.type === 'boss' ? 28 : 22;
-
-            ctx.save();
-            ctx.translate(ex, ey);
-            ctx.shadowColor = e.color;
-            ctx.shadowBlur = 10;
-            ctx.font = `${eSize}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(e.symbol, 0, 0);
-
-            if (e.isFriendly) {
-                ctx.save();
-                ctx.strokeStyle = 'rgba(56, 239, 125, 0.7)';
-                ctx.lineWidth = 1.2;
-                ctx.beginPath();
-                ctx.arc(0, 0, 14, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.restore();
-            } else if (e.isMine) {
-                ctx.save();
-                ctx.strokeStyle = 'rgba(255, 8, 68, 0.75)';
-                ctx.lineWidth = 1.2;
-                ctx.setLineDash([2, 2]);
-                ctx.beginPath();
-                ctx.arc(0, 0, 14, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.restore();
-            }
-
-            ctx.restore();
-        });
-
         if (player) {
-            stageState.lasers.forEach(laser => {
+            // Real enemies from player
+            const enemies = player.galagaEnemies || [];
+            enemies.forEach(e => {
+                const ex = e.x * w;
+                const ey = e.y * h;
+                const eSize = e.type === 'boss' ? 28 : 22;
+
+                ctx.save();
+                ctx.translate(ex, ey);
+                ctx.shadowColor = e.color || '#00f0ff';
+                ctx.shadowBlur = 10;
+                ctx.font = `${eSize}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(e.symbol || '👾', 0, 0);
+
+                if (e.isFriendly) {
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(56, 239, 125, 0.7)';
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 14, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                } else if (e.isMine) {
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(255, 8, 68, 0.75)';
+                    ctx.lineWidth = 1.2;
+                    ctx.setLineDash([2, 2]);
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 14, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                ctx.restore();
+            });
+
+            // Real lasers fired by player
+            const lasers = player.galagaLasers || [];
+            lasers.forEach(laser => {
                 const lx = laser.x * w;
                 const ly = laser.y * h;
                 ctx.save();
-                ctx.shadowColor = laser.color;
+                ctx.shadowColor = laser.color || '#ff3366';
                 ctx.shadowBlur = 8;
-                ctx.fillStyle = laser.color;
+                ctx.fillStyle = laser.color || '#ff3366';
                 ctx.fillRect(lx - 2, ly - 8, 4, 16);
                 ctx.restore();
             });
 
-            const sx = stageState.currentShipX * w;
+            // Player Ship
+            const currentX = typeof player.currentShipX === 'number' ? player.currentShipX : 0.5;
+            const sx = currentX * w;
             const sy = 0.84 * h;
 
             ctx.save();
@@ -1580,7 +1703,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ctx.closePath();
             ctx.fill();
 
-            if (stageState.dualFighter) {
+            if (player.dualFighter) {
                 drawHostStarfighterUnit(ctx, -10, 0, rankColor);
                 drawHostStarfighterUnit(ctx, 10, 0, rankColor);
                 ctx.strokeStyle = '#00ff88';
@@ -1597,30 +1720,34 @@ document.addEventListener('DOMContentLoaded', () => {
             ctx.fillStyle = '#ffffff';
             ctx.font = 'bold 11px Inter, sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText(player.nickname, 0, -18);
+            ctx.fillText(player.nickname || '', 0, -18);
 
             ctx.restore();
 
-            stageState.floatingTexts.forEach(ft => {
+            // Floating texts
+            const floatingTexts = player.floatingTexts || [];
+            floatingTexts.forEach(ft => {
                 ctx.save();
                 ctx.globalAlpha = Math.max(0, ft.alpha);
                 ctx.fillStyle = ft.color;
                 ctx.shadowColor = ft.color;
                 ctx.shadowBlur = 8;
-                ctx.font = 'bold 13px Inter, sans-serif';
+                ctx.font = 'bold 13px Chakra Petch, sans-serif';
                 ctx.textAlign = 'center';
                 ctx.fillText(ft.text, ft.x * w, ft.y * h);
                 ctx.restore();
             });
 
-            stageState.particles.forEach(p => {
+            // Particles
+            const particles = player.particles || [];
+            particles.forEach(p => {
                 ctx.save();
                 ctx.globalAlpha = Math.max(0, p.alpha);
                 ctx.fillStyle = p.color;
                 ctx.shadowColor = p.color;
                 ctx.shadowBlur = 6;
                 ctx.beginPath();
-                ctx.arc(p.x * w, p.y * h, p.size, 0, Math.PI * 2);
+                ctx.arc(p.x * w, p.y * h, p.size || 2.5, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.restore();
             });
@@ -1693,6 +1820,376 @@ document.addEventListener('DOMContentLoaded', () => {
         broadcastState({
             type: 'GAME_OVER',
             game: 'galaga',
+            leaderboard: sorted,
+            winnerName: winnerName
+        });
+
+        triggerConfetti();
+        playSynthBeep(523.25, 0.15);
+        setTimeout(() => playSynthBeep(659.25, 0.15), 150);
+        setTimeout(() => playSynthBeep(783.99, 0.35), 300);
+
+        setTimeout(() => {
+            showSuiteLeaderboard(winnerName);
+        }, 2500);
+    }
+
+    // === 8.8 POPCAT BATTLE MODE GAME LOGIC (Host Spectator Top 3 Live Engine) ===
+    function startPopcatCountdown() {
+        broadcastState({
+            type: 'START_COUNTDOWN',
+            countdown: 5,
+            duration: 60
+        });
+
+        popcatAnnouncement.textContent = 'เตรียมรัวนิ้วเคาะแมว PopCat ใน 1 นาที! เริ่มใน... 5 🐱💥';
+
+        // รีเซ็ตข้อมูลเฉพาะของเกม PopCat สำหรับผู้เล่นทุกคน
+        Object.keys(players).forEach(id => {
+            players[id].score = 0;
+            players[id].pps = 0;
+            players[id].tier = 1;
+            players[id].isOpen = false;
+            players[id].popScale = 1.0;
+            players[id].floatingTexts = [];
+            if (!players[id].scores) players[id].scores = {};
+            players[id].scores.popcat = 0;
+        });
+
+        popcatStagesState = [
+            { popScale: 1.0, floatingTexts: [], particles: [] },
+            { popScale: 1.0, floatingTexts: [], particles: [] },
+            { popScale: 1.0, floatingTexts: [], particles: [] }
+        ];
+
+        resizeCanvas();
+        updatePopcatLeaderboard();
+
+        let count = 5;
+        if (popcatTimer) popcatTimer.textContent = `${count}s`;
+        playSynthBeep(440, 0.1);
+
+        popcatCountdownInterval = setInterval(() => {
+            count--;
+            if (count > 0) {
+                if (popcatTimer) popcatTimer.textContent = `${count}s`;
+                popcatAnnouncement.textContent = `เตรียมรัวนิ้วเคาะแมว PopCat ใน 1 นาที! เริ่มใน... ${count} 🐱💥`;
+                playSynthBeep(440 + (5 - count) * 80, 0.1);
+            } else {
+                clearInterval(popcatCountdownInterval);
+                if (popcatTimer) popcatTimer.textContent = 'GO!';
+                playSynthBeep(880, 0.3);
+                startPopcatGamePlay();
+            }
+        }, 1000);
+    }
+
+    function startPopcatGamePlay() {
+        gameActive = true;
+        gameTimer = 60;
+
+        popcatAnnouncement.textContent = '🔥 เริ่มได้! รัวเคาะแมวให้ไวที่สุด! (คลิกเกิน 100 เปลี่ยนร่าง!)';
+        if (popcatTimer) popcatTimer.textContent = `${gameTimer}s`;
+
+        broadcastState({
+            type: 'START_GAME',
+            duration: 60
+        });
+
+        // Loop นับเวลาถอยหลัง 60 วินาที
+        popcatTimerInterval = setInterval(() => {
+            gameTimer--;
+            if (popcatTimer) popcatTimer.textContent = `${gameTimer}s`;
+
+            broadcastState({
+                type: 'TIMER_TICK',
+                timeLeft: gameTimer
+            });
+
+            if (gameTimer <= 0) {
+                endPopcatGame();
+            }
+        }, 1000);
+
+        // เริ่มต้นการเรนเดอร์ถ่ายทอดสด 3 อันดับแรกแบบ 60 FPS
+        startPopcatStagesLoop();
+    }
+
+    function startPopcatStagesLoop() {
+        let lastTime = performance.now();
+        if (popcatAnimId) cancelAnimationFrame(popcatAnimId);
+
+        function renderPopcatStages(timestamp) {
+            if (!gameActive || activeGameMode !== 'popcat') {
+                popcatAnimId = null;
+                return;
+            }
+
+            const dt = Math.min(0.1, (timestamp - lastTime) / 1000);
+            lastTime = timestamp;
+
+            // คัดเลือก 3 อันดับแรกตามจำนวนครั้งที่เคาะ (Score)
+            const sortedPlayers = Object.keys(players)
+                .map(id => players[id])
+                .sort((a, b) => (b.score || 0) - (a.score || 0));
+
+            // แสดงสดบน 3 เวที Top 3
+            for (let stageIdx = 0; stageIdx < 3; stageIdx++) {
+                const player = sortedPlayers[stageIdx];
+                const canvas = popcatStageCanvases[stageIdx];
+                const ctx = popcatStageContexts[stageIdx];
+                const nameLabel = popcatStageNames[stageIdx];
+                const scoreLabel = popcatStageScores[stageIdx];
+
+                if (!canvas || !ctx) continue;
+
+                if (player) {
+                    if (nameLabel) nameLabel.textContent = player.nickname || 'นักเคาะ';
+                    if (scoreLabel) {
+                        const pps = player.pps || 0;
+                        const ppsColor = pps > 7 ? 'var(--neon-pink)' : 'var(--neon-gold)';
+                        scoreLabel.innerHTML = `${player.score || 0} pops <span style="font-size: 0.8rem; color: ${ppsColor}; margin-left: 4px;">⚡${pps} pps</span>`;
+                    }
+                } else {
+                    if (nameLabel) nameLabel.textContent = 'รอนักเคาะ...';
+                    if (scoreLabel) scoreLabel.textContent = '0 pops';
+                }
+
+                drawPopcatStageCanvas(ctx, canvas, player, stageIdx, timestamp, dt);
+            }
+
+            // ซิงค์อันดับสดให้มือถือผู้เล่นทุกคนทุก 200ms
+            if (timestamp - popcatLastStandingsBroadcast > 200) {
+                popcatLastStandingsBroadcast = timestamp;
+                broadcastPopcatStandings();
+            }
+
+            popcatAnimId = requestAnimationFrame(renderPopcatStages);
+        }
+
+        popcatAnimId = requestAnimationFrame(renderPopcatStages);
+    }
+
+    function drawPopcatStageCanvas(ctx, canvas, player, stageIdx, timestamp, dt) {
+        const rect = canvas.getBoundingClientRect();
+        const w = rect.width;
+        const h = rect.height;
+
+        if (w === 0 || h === 0) return;
+
+        ctx.save();
+        ctx.clearRect(0, 0, w, h);
+
+        // วาดพื้นหลังเวทีถ่ายทอดสดสไตล์ Arcade Cyberspace
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
+        bgGrad.addColorStop(0, '#060914');
+        bgGrad.addColorStop(1, '#0e1428');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, w, h);
+
+        // แสงสปอตไลต์เวทีตามอันดับ (ทอง / เงิน / ทองแดง)
+        let spotColor = 'rgba(255, 215, 0, 0.15)';
+        if (stageIdx === 1) spotColor = 'rgba(220, 220, 220, 0.12)';
+        if (stageIdx === 2) spotColor = 'rgba(205, 127, 50, 0.12)';
+
+        const spotGrad = ctx.createRadialGradient(w / 2, h * 0.55, 10, w / 2, h * 0.55, w * 0.55);
+        spotGrad.addColorStop(0, spotColor);
+        spotGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = spotGrad;
+        ctx.fillRect(0, 0, w, h);
+
+        if (player) {
+            // ตรวจจับสถานะการเคาะอ้าปาก (เปิดค้าง หรือเคาะล่าสุดไม่เกิน 110ms)
+            const isPopping = player.isOpen || (Date.now() - (player.lastPopTime || 0) < 110);
+            if (isPopping) {
+                player.popScale = 0.88;
+            }
+
+            // คำนวณแอนิเมชัน Squash & Stretch แบบฟิสิกส์คืนรูป
+            if (typeof player.popScale !== 'number') player.popScale = 1.0;
+            player.popScale += (1.0 - player.popScale) * Math.min(1.0, 16 * dt);
+
+            // แอนิเมชันขยับขึ้นลงเบาๆ เมื่ออยู่นิ่ง (Idle Bobbing)
+            const bob = isPopping ? 3 : Math.sin(timestamp * 0.003 + stageIdx * 1.5) * 4;
+
+            // เลือกรูปภาพแมวตามเงื่อนไขที่เจ้านายกำหนด:
+            // - ยังไม่คลิก / ปล่อย: cat_normal.png
+            // - คลิกแล้วไม่เกิน 100 ครั้ง: cat_open1.png
+            // - คลิกเกิน 100 ครั้ง: cat_open2.png
+            let catImg = popcatHostImages.normal;
+            const isTier2 = (player.score || 0) > 100;
+
+            if (isPopping) {
+                catImg = isTier2 ? popcatHostImages.open2 : popcatHostImages.open1;
+            }
+
+            const catSize = Math.min(w * 0.78, h * 0.58);
+            const cx = w / 2;
+            const cy = h / 2 + 10 + bob;
+
+            // เอฟเฟกต์ออร่าเพลิงนีออนพิเศษเมื่อผู้เล่นก้าวข้าม 100 ครั้ง (Super Cat)
+            if (isTier2) {
+                ctx.save();
+                ctx.translate(cx, cy);
+                const pulseAura = 1 + Math.sin(timestamp * 0.008) * 0.06;
+                const auraRadius = (catSize * 0.6) * pulseAura;
+                const auraGrad = ctx.createRadialGradient(0, 0, catSize * 0.2, 0, 0, auraRadius);
+                auraGrad.addColorStop(0, 'rgba(255, 0, 119, 0.45)');
+                auraGrad.addColorStop(0.65, 'rgba(255, 204, 0, 0.25)');
+                auraGrad.addColorStop(1, 'rgba(255, 0, 119, 0)');
+                ctx.fillStyle = auraGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, auraRadius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // วาดรูปแมวลงบนเวทีพร้อมสเกล Squash
+            ctx.save();
+            ctx.translate(cx, cy);
+            const sy = player.popScale;
+            const sx = 2.0 - sy;
+            ctx.scale(sx, sy);
+
+            if (catImg && catImg.complete && catImg.naturalWidth > 0) {
+                ctx.drawImage(catImg, -catSize / 2, -catSize / 2, catSize, catSize);
+            } else {
+                // Fallback ในกรณีรูปยังโหลดไม่เสร็จ
+                ctx.fillStyle = '#ffcc00';
+                ctx.beginPath();
+                ctx.arc(0, 0, catSize * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+
+            // วาดตัวเลขคะแนนลอย (+1 / +1 🔥) กระจายออกจากปากแมว
+            if (player.floatingTexts && player.floatingTexts.length > 0) {
+                for (let i = player.floatingTexts.length - 1; i >= 0; i--) {
+                    const ft = player.floatingTexts[i];
+                    ft.y += (ft.vy || -0.6) * dt;
+                    ft.x += (ft.vx || 0) * dt;
+                    ft.alpha -= 1.3 * dt;
+
+                    if (ft.alpha <= 0) {
+                        player.floatingTexts.splice(i, 1);
+                        continue;
+                    }
+
+                    ctx.save();
+                    ctx.globalAlpha = Math.max(0, ft.alpha);
+                    ctx.fillStyle = ft.color || '#ffcc00';
+                    ctx.shadowColor = ft.color || '#ffcc00';
+                    ctx.shadowBlur = 10;
+                    ctx.font = `bold ${ft.size || 20}px Inter, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(ft.text, ft.x * w, ft.y * h);
+                    ctx.restore();
+                }
+            }
+
+            // แถบป้ายสถิติความเร็วเคาะ (PPS Meter / Flame Badge)
+            if ((player.pps || 0) >= 7) {
+                ctx.save();
+                ctx.font = 'bold 11px Inter, sans-serif';
+                ctx.fillStyle = '#ff0077';
+                ctx.shadowColor = '#ff0077';
+                ctx.shadowBlur = 8;
+                ctx.textAlign = 'center';
+                ctx.fillText(`🔥 SPEED: ${player.pps} PPS ⚡`, cx, cy - catSize / 2 - 12);
+                ctx.restore();
+            } else if (isTier2) {
+                ctx.save();
+                ctx.font = 'bold 11px Inter, sans-serif';
+                ctx.fillStyle = '#ffcc00';
+                ctx.shadowColor = '#ffcc00';
+                ctx.shadowBlur = 6;
+                ctx.textAlign = 'center';
+                ctx.fillText('⚡ SUPER POPCAT (ขั้น 2) 🐱', cx, cy - catSize / 2 - 10);
+                ctx.restore();
+            }
+        } else {
+            // กรณีไม่มีผู้เล่นในอันดับนี้ (เวทีว่าง)
+            ctx.save();
+            ctx.font = 'bold 14px Inter, sans-serif';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+            ctx.textAlign = 'center';
+            ctx.fillText('🐱 รอนักเคาะ...', w / 2, h / 2);
+            ctx.restore();
+        }
+
+        ctx.restore();
+    }
+
+    function updatePopcatLeaderboard() {
+        if (!popcatLeaderboard) return;
+        popcatLeaderboard.innerHTML = '';
+        const sorted = Object.keys(players).map(id => {
+            return {
+                id,
+                nickname: players[id].nickname,
+                score: players[id].score || 0,
+                pps: players[id].pps || 0
+            };
+        }).sort((a, b) => b.score - a.score);
+
+        sorted.forEach((player, index) => {
+            const li = document.createElement('li');
+            const rankClass = index === 0 ? 'rank-1' : index === 1 ? 'rank-2' : index === 2 ? 'rank-3' : '';
+            if (rankClass) li.classList.add(rankClass);
+
+            const ppsBadge = player.pps > 0 ? `<small style="color: var(--neon-gold); margin-left: 6px;">⚡${player.pps} pps</small>` : '';
+            li.innerHTML = `
+                <span>#${index + 1} ${escapeHTML(player.nickname)}${ppsBadge}</span>
+                <span style="color: var(--accent); font-weight: bold;">${player.score} pops</span>
+            `;
+            popcatLeaderboard.appendChild(li);
+        });
+    }
+
+    function broadcastPopcatStandings() {
+        const sorted = Object.keys(players).map(id => ({
+            peerId: id,
+            id: id,
+            nickname: players[id].nickname,
+            score: players[id].score || 0,
+            pps: players[id].pps || 0
+        })).sort((a, b) => b.score - a.score);
+
+        broadcastState({
+            type: 'POPCAT_STANDINGS',
+            standings: sorted
+        });
+    }
+
+    function endPopcatGame() {
+        gameActive = false;
+        clearInterval(popcatTimerInterval);
+        clearInterval(popcatCountdownInterval);
+        if (popcatAnimId) {
+            cancelAnimationFrame(popcatAnimId);
+            popcatAnimId = null;
+        }
+
+        const sorted = Object.keys(players).map(id => {
+            return { id, nickname: players[id].nickname, score: players[id].score || 0 };
+        }).sort((a, b) => b.score - a.score);
+
+        sorted.forEach((p, index) => {
+            let pScore = 5;
+            if (index === 0) pScore = 15;
+            else if (index === 1) pScore = 12;
+            else if (index === 2) pScore = 10;
+
+            if (!players[p.id].scores) players[p.id].scores = {};
+            players[p.id].scores.popcat = p.score;
+            players[p.id].score = (players[p.id].score || 0) + pScore;
+        });
+
+        const winnerName = sorted.length > 0 ? sorted[0].nickname : 'ไม่มี';
+
+        broadcastState({
+            type: 'GAME_OVER',
+            game: 'popcat',
             leaderboard: sorted,
             winnerName: winnerName
         });
@@ -1964,6 +2461,10 @@ document.addEventListener('DOMContentLoaded', () => {
             players[id].shipX = 0.5;
             players[id].dualFighter = false;
             players[id].combo = 0;
+            players[id].pps = 0;
+            players[id].isOpen = false;
+            players[id].popScale = 1.0;
+            players[id].floatingTexts = [];
         });
 
         gameActive = false;
@@ -2302,10 +2803,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 250);
     }
 
+    // Shared Singleton AudioContext ป้องกัน Garbage Collection และ Audio Hardware Throttling
+    let sharedHostAudioCtx = null;
+    function getHostAudioContext() {
+        if (!sharedHostAudioCtx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) sharedHostAudioCtx = new AudioCtx();
+        }
+        if (sharedHostAudioCtx && sharedHostAudioCtx.state === 'suspended') {
+            sharedHostAudioCtx.resume().catch(() => {});
+        }
+        return sharedHostAudioCtx;
+    }
+
     // สร้างเสียงบี๊บสังเคราะห์ผ่าน Web Audio API (ไม่ต้องพึ่งไฟล์เสียงจากภายนอก)
     function playSynthBeep(frequency = 440, duration = 0.1) {
         try {
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const audioCtx = getHostAudioContext();
+            if (!audioCtx) return;
             const oscillator = audioCtx.createOscillator();
             const gainNode = audioCtx.createGain();
 
