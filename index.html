@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GFleth Party Game Hub - สมรภูมิปาร์ตี้ P2P บนมือถือ</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
+    
+    <!-- CSS Link -->
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- PeerJS for P2P connection -->
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <!-- QRCodeJS for easy mobile scanning (Fallback support) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- Canvas Confetti Library for Victory Celebration on Mobile -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+</head>
+<body>
+    <div class="stars-bg"></div>
+    <div class="nebula-bg"></div>
+
+    <!-- Floating Fullscreen & Portrait Lock Button -->
+    <button id="btn-fullscreen-toggle" class="btn-fullscreen-float" title="สลับโหมดเต็มจอแนวตั้ง" aria-label="เต็มจอ">
+        <span id="fullscreen-icon">⛶</span>
+    </button>
+
+    <!-- Smart Fullscreen Prompt Banner เมื่อเข้าสู่การแข่งขัน -->
+    <div id="fullscreen-prompt" class="fullscreen-prompt hidden">
+        <div class="fs-prompt-banner" id="fs-prompt-banner">
+            <span class="fs-prompt-icon">📱</span>
+            <div class="fs-prompt-text">
+                <strong>แตะเพื่อเข้าสู่โหมดเต็มจอแนวตั้ง</strong>
+                <small>ล็อคสเกล 1:1 ป้องกันการซูม เพื่อความเท่าเทียม</small>
+            </div>
+            <button class="btn-fs-prompt" id="btn-fs-prompt-action">⛶ เต็มจอ</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 1. LANDING SCREEN (กรอกชื่อและรหัสห้องเพื่อเชื่อมต่อ) -->
+        <section id="screen-landing" class="screen active">
+            <div class="logo-area">
+                <div class="rocket-icon-pulse">🚀</div>
+                <h1 class="game-title">GFleth<br><span>GAME PORTAL</span></h1>
+                <p class="game-subtitle">สงครามปาร์ตี้เชื่อมต่อไร้เซิร์ฟเวอร์ (P2P Client)</p>
+            </div>
+
+            <div class="landing-grid">
+                <div class="card">
+                    <h3 style="margin-bottom: 12px; font-family: var(--font-game); font-size: 1.1rem; color: var(--accent);">🎮 กรอกข้อมูลผู้เล่นเพื่อเข้าสู่ห้อง</h3>
+                    <div class="form-group">
+                        <label for="input-nickname">ชื่อเล่นของคุณ (สูงสุด 12 ตัวอักษร)</label>
+                        <input type="text" id="input-nickname" placeholder="เช่น กัปตันนรินทร์..." maxlength="12">
+                    </div>
+                    <div class="form-group">
+                        <label for="input-room-id">รหัสห้องแข่งขัน</label>
+                        <input type="text" id="input-room-id" value="GFLETH" placeholder="รหัสห้อง" readonly>
+                    </div>
+                    <button id="btn-join-lobby" class="btn btn-primary btn-block">
+                        🚀 เข้าร่วมปาร์ตี้ (JOIN LOBBY)
+                    </button>
+                </div>
+            </div>
+            
+            <!-- การ์ดตัวเลือกลับสำหรับเปิดโฮสต์บน index.html (ถ้าใช้ showhost=true) -->
+            <div class="card host-card-setup hidden" style="margin-top: 10px;">
+                <h3>📺 สำหรับจอกลาง (Host / Projector)</h3>
+                <p class="host-desc" style="font-size: 0.8rem; margin-bottom: 10px;">เปิดหน้าจอนี้ค้างไว้บนโปรเจกเตอร์เพื่อแสดงผลไลฟ์สดคะแนน</p>
+                <button id="btn-create-lobby" class="btn btn-secondary btn-block">
+                    🖥️ เปิดหน้าจอกลาง (CREATE LOBBY)
+                </button>
+            </div>
+            
+            <div style="text-align: center; font-size: 0.75rem; color: var(--text-muted); margin-top: 16px;">
+                <p>💡 สแกนเข้าร่วมได้ทันที ระบบจะต่อคิวและเปลี่ยนโหมดเกมตามจอกลางอัตโนมัติ</p>
+            </div>
+        </section>
+
+        <!-- 2. LOBBY SCREEN (หน้ารอแอดมินเลือก/เริ่มเกม) -->
+        <section id="screen-lobby" class="screen">
+            <div class="header">
+                <button id="btn-lobby-back" class="btn-back">🚪 ออก</button>
+                <h2>ปาร์ตี้ล็อบบี้</h2>
+                <div class="status-badge" id="lobby-status-text">เชื่อมต่อสำเร็จ</div>
+            </div>
+
+            <div class="card" style="text-align: center; padding: 24px 16px;">
+                <div style="font-size: 3rem; margin-bottom: 10px; animation: pulse 1.5s infinite alternate;">🎮</div>
+                <h3 id="player-welcome-title" style="margin-bottom: 6px;">ยินดีต้อนรับ!</h3>
+                <p style="color: var(--accent); font-weight: 600; margin-bottom: 12px;">ห้อง: GFLETH</p>
+                
+                <div style="background: rgba(0,0,0,0.3); border-radius: 10px; padding: 12px; border: 1px dashed rgba(255,255,255,0.06); margin-bottom: 16px;">
+                    <p style="font-size: 0.85rem; color: var(--text-muted);" id="lobby-instruction">กำลังรอผู้จัดงานสลับโหมดและเริ่มการแข่งขัน...</p>
+                </div>
+
+                <div class="lobby-actions">
+                    <p class="lobby-waiting-msg">หน้าจอจะถูกเปลี่ยนโหมดเกมตามที่แอดมินสลัดทันที ไม่ต้องกดรีเฟรช</p>
+                </div>
+            </div>
+            
+            <!-- ข้อมูลรายชื่อผู้เล่นที่จอยด้วยกัน (ไว้แอบดู) -->
+            <div class="card">
+                <div class="lobby-header-bar">
+                    <h3>เพื่อนร่วมสมรภูมิ (<span id="player-count">0</span> คน)</h3>
+                </div>
+                <div class="players-list-wrapper" style="min-height: 120px; max-height: 180px;">
+                    <ul id="list-players">
+                        <!-- รายชื่อผู้เล่นคนอื่น -->
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. CONTROLLER SCREEN: ROCKET RACING (เคาะแข่งจรวด) -->
+        <section id="screen-controller-rocket" class="screen">
+            <div class="game-header">
+                <div class="room-indicator">จรวดของคุณ: <span class="my-nickname-span">-</span></div>
+                <div class="game-state-text" id="rocket-announcement">เตรียมรัวนิ้ว!</div>
+                <div class="game-timer" id="rocket-countdown">5</div>
+            </div>
+
+            <div class="card" style="margin-bottom: 12px;">
+                <div class="controller-area">
+                    <div class="overdrive-wrapper">
+                        <div class="overdrive-label">⚡ OVERDRIVE CORE STATUS (ความเร่งสะสม)</div>
+                        <div class="overdrive-bar-bg">
+                            <div id="overdrive-bar" class="overdrive-bar"></div>
+                        </div>
+                    </div>
+
+                    <div class="controller-stats">
+                        <div class="stat-box">
+                            <span class="stat-label">ความเร็วเคาะ</span>
+                            <span class="stat-val" id="stat-speed">0 <small>km/h</small></span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-label">อันดับสด</span>
+                            <span class="stat-val" id="stat-rank"># -</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-label">คะแนนเคาะ</span>
+                            <span class="stat-val" id="stat-progress">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ปุ่มเคาะยักษ์แบบเต็มจอแนวตั้ง (Touch-optimized) -->
+            <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; min-height: 250px;">
+                <button id="btn-tap" class="btn-tap-rocket" disabled>
+                    <div class="tap-inner">
+                        <span class="tap-rocket-icon">⚡</span>
+                        <span class="tap-text">IGNITION!</span>
+                    </div>
+                </button>
+            </div>
+        </section>
+
+        <!-- 4. CONTROLLER SCREEN: CATCH IT! (เลื่อนตะกร้ารับของ) -->
+        <section id="screen-controller-catch" class="screen">
+            <div class="game-header">
+                <div class="room-indicator">ผู้เล่น: <span class="my-nickname-span">-</span></div>
+                <div class="game-state-text" id="catch-player-announcement">เตรียมรับของรางวัล!</div>
+                <div class="game-timer" id="catch-player-timer">60s</div>
+            </div>
+
+            <div class="card" style="padding: 10px; margin-bottom: 8px;">
+                <div class="catch-player-hud">
+                    <div class="stat-box">
+                        <span class="stat-label">คะแนน</span>
+                        <span class="stat-val" id="catch-player-score" style="color: var(--accent);">0</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">คอมโบ</span>
+                        <span class="stat-val" id="catch-player-combo" style="color: var(--neon-gold);">x0</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">อันดับสด</span>
+                        <span class="stat-val" id="catch-player-rank"># -</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- พื้นที่เกม Catch Canvas ควบคุมด้วย Touch Drag -->
+            <div class="catch-canvas-container">
+                <canvas id="catch-player-canvas"></canvas>
+                <div class="catch-drag-hint" id="catch-drag-hint">
+                    <span>👈 แตะแล้วลากนิ้วไปมาซ้าย-ขวาเพื่อเลื่อนตะกร้า 👉</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4.5 CONTROLLER SCREEN: GALAGA '88 (สงครามอวกาศล่าแต้ม) -->
+        <section id="screen-controller-galaga" class="screen">
+            <div class="game-header">
+                <div class="room-indicator">นักบิน: <span class="my-nickname-span">-</span></div>
+                <div class="game-state-text" id="galaga-player-announcement">ยิงเอเลี่ยน! ห้ามยิง 👨‍🚀 เพื่อน / 💣 ระเบิด (ยิงผิดลดคะแนน!)</div>
+                <div class="game-timer" id="galaga-player-timer">60s</div>
+            </div>
+
+            <div class="card" style="padding: 10px; margin-bottom: 8px;">
+                <div class="catch-player-hud">
+                    <div class="stat-box">
+                        <span class="stat-label">คะแนน</span>
+                        <span class="stat-val" id="galaga-player-score" style="color: var(--accent);">0</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">คอมโบ</span>
+                        <span class="stat-val" id="galaga-player-combo" style="color: var(--neon-gold);">x0</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">อันดับสด</span>
+                        <span class="stat-val" id="galaga-player-rank"># -</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- พื้นที่เกม Galaga Canvas -->
+            <div class="galaga-canvas-container">
+                <canvas id="galaga-player-canvas"></canvas>
+                <div class="catch-drag-hint" id="galaga-drag-hint">
+                    <span>👈 ลากยานยิงเอเลี่ยน | ห้ามยิง 👨‍🚀 เพื่อน (-30) / 💣 ระเบิด (-20) 👉</span>
+                </div>
+            </div>
+
+            <!-- ปุ่มยิงเลเซอร์ -->
+            <div class="galaga-controls-bar">
+                <button id="btn-galaga-fire" class="galaga-fire-btn">
+                    <span class="fire-icon">🔥</span>
+                    <span class="fire-label">FIRE LASER!</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- 5. CONTROLLER SCREEN: FAST BUZZ! (แย่งกันกดสัญญาณ) -->
+        <section id="screen-controller-buzz" class="screen">
+            <div class="game-header">
+                <div class="room-indicator">โหมด: Fast Buzz!</div>
+                <div class="game-state-text" id="buzz-state-label">สแตนด์บายปุ่มสัญญาณ...</div>
+                <div class="game-timer" id="buzz-rank-badge">-</div>
+            </div>
+
+            <!-- ปุ่ม Buzz ยักษ์ตรงกลางจอมือถือ -->
+            <div style="flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px;">
+                <button id="btn-buzz" class="buzz-giant-btn" disabled>
+                    <span class="buzz-icon">🚨</span>
+                    <span class="buzz-label">BUZZ!</span>
+                </button>
+                
+                <p id="buzz-info-msg" style="text-align: center; color: var(--text-muted); font-size: 0.85rem; margin-top: 20px; font-style: italic;">
+                    รอสัญญาณปล่อยจากจอกลาง แล้วแย่งกันกดปุ่มสีแดง!
+                </p>
+            </div>
+        </section>
+
+        <!-- 6. CONTROLLER SCREEN: LUCKY WHEEL (วงล้อเสี่ยงทาย) -->
+        <section id="screen-controller-wheel" class="screen">
+            <div class="game-header">
+                <div class="room-indicator">ผู้โชคดี: <span class="my-nickname-span">-</span></div>
+                <div class="game-state-text">โหมด: สุ่มวงล้อ</div>
+                <div class="game-timer">🎁</div>
+            </div>
+
+            <div class="card" style="text-align: center; padding: 40px 20px; display: flex; flex-direction: column; align-items: center; gap: 16px;">
+                <div id="wheel-status-icon" style="font-size: 4rem; animation: floatAnim 2s infinite alternate;">🎡</div>
+                <h2 id="wheel-player-status" style="font-family: var(--font-game); font-weight: 900; color: #fff;">ร่วมลุ้นของรางวัล!</h2>
+                <div style="background: rgba(0,0,0,0.3); border-radius: 10px; padding: 16px; border: 1px dashed rgba(255,255,255,0.06); width: 100%;">
+                    <p style="font-size: 0.9rem; color: var(--text-muted);" id="wheel-player-instruction">
+                        กำลังดึงชื่อผู้เล่นจอยวงล้อบนจอกลาง... กรุณารอลุ้นผลวงล้อเสี่ยงโชคที่จอกลางใหญ่ครับ
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 7. RESULT SCREEN (กระดานสรุปคะแนนสะสมและประกาศผลผู้ชนะ) -->
+        <section id="screen-result" class="screen">
+            <div class="logo-area">
+                <span class="trophy-icon">🏆</span>
+                <h1 class="result-title">สิ้นสุดการแข่งขันปาร์ตี้!</h1>
+                <p id="winner-announcement">ผู้ชนะคือ: <span>-</span></p>
+            </div>
+
+            <div class="card leaderboard-card">
+                <h3>ตารางคะแนนรวมสุดท้ายของผู้เล่น</h3>
+                <ol id="leaderboard-list" class="leaderboard-list">
+                    <!-- แสดงอันดับคะแนนที่นี่ -->
+                </ol>
+
+                <div class="result-actions">
+                    <button id="btn-quit" class="btn btn-secondary btn-block">
+                        🚪 ออกจากห้องแข่งขัน
+                    </button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- โหลดสคริปต์ควบคุมฝั่งมือถือผู้เล่น (P2P client logic สำหรับ 4 เกม) -->
+    <script src="app.js"></script>
+</body>
+</html>

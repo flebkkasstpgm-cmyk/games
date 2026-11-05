@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GFleth Party Game Hub - แผงควบคุมผู้จัดดูแลระบบ (Admin)</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
+    
+    <!-- CSS Link -->
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- PeerJS for P2P connection -->
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <!-- QRCodeJS for easy mobile scanning -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- Canvas Confetti Library for Victory Celebration -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+</head>
+<body>
+    <div class="stars-bg"></div>
+    <div class="nebula-bg"></div>
+
+    <div class="host-container">
+        <!-- 1. LOBBY SCREEN (แผงควบคุมรอเตรียมพร้อมและเลือกเกม) -->
+        <section id="screen-lobby" class="screen active">
+            <div class="header">
+                <h2>ศูนย์ควบคุมเกมปาร์ตี้ (Admin Control Panel)</h2>
+                <div class="status-badge" id="lobby-status-text">กำลังเปิดระบบ P2P...</div>
+            </div>
+
+            <div class="lobby-grid">
+                <!-- ข้อมูลห้องและการเชื่อมต่อ -->
+                <div class="card room-info-card">
+                    <h3>สแกนเข้าร่วมแข่งขัน</h3>
+                    <div class="room-id-display">
+                        <span class="label">รหัสห้อง P2P</span>
+                        <div class="id-wrapper">
+                            <span id="text-room-id">GFLETH</span>
+                            <button id="btn-copy-link" class="btn-icon-only" title="คัดลอกลิงก์เชิญ">📋</button>
+                        </div>
+                    </div>
+                    
+                    <div class="qr-wrapper">
+                        <div id="qrcode"></div>
+                        <p class="qr-label">สแกนด้วยมือถือเพื่อจอยห้อง</p>
+                    </div>
+                </div>
+
+                <!-- รายชื่อผู้เข้าร่วมและปุ่มสตาร์ท -->
+                <div class="card players-card">
+                    <div class="card-header">
+                        <h3>ผู้เล่นในห้องพร้อมแข่ง (<span id="player-count">0</span>/120 คน)</h3>
+                    </div>
+                    <div class="players-list-wrapper">
+                        <ul id="list-players">
+                            <!-- รายชื่อจะเด้งขึ้นตรงนี้ -->
+                        </ul>
+                    </div>
+                    
+                    <div class="lobby-actions">
+                        <button id="btn-start-game" class="btn btn-primary btn-block">
+                            🚀 เริ่มการแข่งขันโหมดที่เลือก (START)
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- แผงเลือกเกม (Game Selector) -->
+            <div class="card" style="margin-top: 16px;">
+                <h3 style="font-family: var(--font-game); color: var(--accent); font-size: 1.1rem; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 6px; margin-bottom: 12px; text-transform: uppercase;">
+                    🎮 เลือกประเภทเกมปาร์ตี้ที่จะรัน
+                </h3>
+                <div class="game-selector-grid">
+                    <!-- GAME 1: Rocket Racing -->
+                    <div class="game-select-card active" data-game="rocket">
+                        <div class="game-select-icon">🚀</div>
+                        <h4>Rocket Racing</h4>
+                        <p>รัวนิ้วปล่อยไอพ่นแข่งความเร็วใน 1 นาที สะสมความร้อนแซงขึ้นเป็นที่ 1 บนจอกลาง</p>
+                    </div>
+
+                    <!-- GAME 2: Catch It! -->
+                    <div class="game-select-card" data-game="catch">
+                        <div class="game-select-icon">🧺</div>
+                        <h4>Catch It!</h4>
+                        <p>เลื่อนตะกร้ารับของขวัญและดาวทองใน 1 นาที จอกลางถ่ายทอดสด 3 อันดับแรก!</p>
+                    </div>
+
+                    <!-- GAME 3: Fast Buzz! -->
+                    <div class="game-select-card" data-game="buzz">
+                        <div class="game-select-icon">🚨</div>
+                        <h4>Fast Buzz!</h4>
+                        <p>กดปุ่มสีแดงยักษ์แย่งสิทธิ์ตอบคำถามสด ใครกดไวที่สุดเสียงไซเรนเด้งจอใหญ่</p>
+                    </div>
+
+                    <!-- GAME 4: Lucky Wheel -->
+                    <div class="game-select-card" data-game="wheel">
+                        <div class="game-select-icon">🎡</div>
+                        <h4>Lucky Wheel</h4>
+                        <p>วงล้อหมุนสุ่มชื่อผู้โชคดีดึงรายชื่อจากทุกคนที่จอยอยู่ในล็อบบี้</p>
+                    </div>
+
+                    <!-- GAME 5: Galaga '88 -->
+                    <div class="game-select-card" data-game="galaga">
+                        <div class="game-select-icon">👾</div>
+                        <h4>Galaga '88</h4>
+                        <p>สงครามอวกาศล่าแต้ม ยิงเอเลี่ยน ระวังยิงผิดพวก 👨‍🚀 หรือระเบิด 💣 ลดคะแนน! ถ่ายทอดสด 3 อันดับแรก</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. GAME SCREEN: ROCKET RACING (แข่งจรวดรัวเคาะ) -->
+        <section id="screen-game-rocket" class="screen">
+            <div class="game-header">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <button class="btn-back btn-back-to-lobby" title="กลับหน้าศูนย์ควบคุม">🔙 กลับ</button>
+                    <div class="room-indicator">ห้องแข่งขัน: <span>GFLETH</span> | โหมด: Rocket Racing</div>
+                </div>
+                <div class="game-state-text" id="rocket-announcement">เตรียมระเบิดพลังปล่อยยาน...</div>
+                <div class="game-timer" id="rocket-countdown">5</div>
+            </div>
+
+            <div class="game-layout">
+                <div class="track-area">
+                    <div class="card track-card">
+                        <div class="canvas-wrapper">
+                            <canvas id="game-canvas"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card leaderboard-sidebar">
+                    <h3>อันดับสมรภูมิแข่งขัน</h3>
+                    <div class="sidebar-list-wrapper">
+                        <ul id="rocket-leaderboard-list">
+                            <!-- อันดับเรียลไทม์จะขึ้นที่นี่ -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. GAME SCREEN: CATCH IT! (จับให้ไว ได้คะแนน) -->
+        <section id="screen-game-catch" class="screen">
+            <div class="game-header">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <button class="btn-back btn-back-to-lobby" title="กลับหน้าศูนย์ควบคุม">🔙 กลับ</button>
+                    <div class="room-indicator">ห้องแข่งขัน: <span>GFLETH</span> | โหมด: Catch It! – จับให้ไว ได้คะแนน</div>
+                </div>
+                <div class="game-state-text" id="catch-announcement">เตรียมตัวรับของรางวัลใน 1 นาที!</div>
+                <div class="game-timer" id="catch-timer">60s</div>
+            </div>
+
+            <div class="game-layout catch-game-layout">
+                <div class="catch-stages-area">
+                    <div class="catch-stages-title-bar">
+                        <h3>🏆 ถ่ายทอดสดการเล่น 3 อันดับแรก (LIVE TOP 3 STREAM)</h3>
+                        <div class="live-pulse-badge"><span class="pulse-dot"></span> LIVE 60 FPS</div>
+                    </div>
+                    
+                    <div class="catch-top3-grid">
+                        <!-- STAGE 1: RANK #1 (GOLD) -->
+                        <div class="catch-stage-card stage-rank-1" id="catch-stage-0">
+                            <div class="stage-rank-badge badge-gold">🥇 อันดับ 1 (LEADER)</div>
+                            <div class="stage-player-header">
+                                <span class="stage-player-name" id="stage-name-0">รอนักแข่ง...</span>
+                                <span class="stage-player-score" id="stage-score-0">0 pts</span>
+                            </div>
+                            <div class="stage-canvas-wrapper">
+                                <canvas id="catch-canvas-0"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- STAGE 2: RANK #2 (SILVER) -->
+                        <div class="catch-stage-card stage-rank-2" id="catch-stage-1">
+                            <div class="stage-rank-badge badge-silver">🥈 อันดับ 2</div>
+                            <div class="stage-player-header">
+                                <span class="stage-player-name" id="stage-name-1">รอนักแข่ง...</span>
+                                <span class="stage-player-score" id="stage-score-1">0 pts</span>
+                            </div>
+                            <div class="stage-canvas-wrapper">
+                                <canvas id="catch-canvas-1"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- STAGE 3: RANK #3 (BRONZE) -->
+                        <div class="catch-stage-card stage-rank-3" id="catch-stage-2">
+                            <div class="stage-rank-badge badge-bronze">🥉 อันดับ 3</div>
+                            <div class="stage-player-header">
+                                <span class="stage-player-name" id="stage-name-2">รอนักแข่ง...</span>
+                                <span class="stage-player-score" id="stage-score-2">0 pts</span>
+                            </div>
+                            <div class="stage-canvas-wrapper">
+                                <canvas id="catch-canvas-2"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card leaderboard-sidebar">
+                    <h3>อันดับคะแนนสด Catch It!</h3>
+                    <div class="sidebar-list-wrapper">
+                        <ul id="catch-leaderboard-list">
+                            <!-- อันดับเรียลไทม์จะขึ้นที่นี่ -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3.5. GAME SCREEN: GALAGA '88 (สงครามอวกาศล่าแต้ม) -->
+        <section id="screen-game-galaga" class="screen">
+            <div class="game-header">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <button class="btn-back btn-back-to-lobby" title="กลับหน้าศูนย์ควบคุม">🔙 กลับ</button>
+                    <div class="room-indicator">ห้องแข่งขัน: <span>GFLETH</span> | โหมด: Galaga '88 – สงครามอวกาศล่าแต้ม</div>
+                </div>
+                <div class="game-state-text" id="galaga-announcement">เตรียมรัวเลเซอร์ถล่มเอเลี่ยนใน 1 นาที! ระวังยิงผิดลดคะแนน 👨‍🚀💣</div>
+                <div class="game-timer" id="galaga-timer">60s</div>
+            </div>
+
+            <div class="game-layout catch-game-layout">
+                <div class="catch-stages-area">
+                    <div class="catch-stages-title-bar">
+                        <h3>👾 ถ่ายทอดสดสงครามอวกาศ 3 อันดับแรก (LIVE TOP 3 STREAM)</h3>
+                        <div class="live-pulse-badge"><span class="pulse-dot"></span> LIVE 60 FPS</div>
+                    </div>
+                    
+                    <div class="catch-top3-grid">
+                        <!-- STAGE 1: RANK #1 (GOLD) -->
+                        <div class="catch-stage-card stage-rank-1" id="galaga-stage-0">
+                            <div class="stage-rank-badge badge-gold">🥇 อันดับ 1 (ACE PILOT)</div>
+                            <div class="stage-player-header">
+                                <span class="stage-player-name" id="galaga-stage-name-0">รอนักบิน...</span>
+                                <span class="stage-player-score" id="galaga-stage-score-0">0 pts</span>
+                            </div>
+                            <div class="stage-canvas-wrapper">
+                                <canvas id="galaga-canvas-0"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- STAGE 2: RANK #2 (SILVER) -->
+                        <div class="catch-stage-card stage-rank-2" id="galaga-stage-1">
+                            <div class="stage-rank-badge badge-silver">🥈 อันดับ 2</div>
+                            <div class="stage-player-header">
+                                <span class="stage-player-name" id="galaga-stage-name-1">รอนักบิน...</span>
+                                <span class="stage-player-score" id="galaga-stage-score-1">0 pts</span>
+                            </div>
+                            <div class="stage-canvas-wrapper">
+                                <canvas id="galaga-canvas-1"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- STAGE 3: RANK #3 (BRONZE) -->
+                        <div class="catch-stage-card stage-rank-3" id="galaga-stage-2">
+                            <div class="stage-rank-badge badge-bronze">🥉 อันดับ 3</div>
+                            <div class="stage-player-header">
+                                <span class="stage-player-name" id="galaga-stage-name-2">รอนักบิน...</span>
+                                <span class="stage-player-score" id="galaga-stage-score-2">0 pts</span>
+                            </div>
+                            <div class="stage-canvas-wrapper">
+                                <canvas id="galaga-canvas-2"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card leaderboard-sidebar">
+                    <h3>อันดับคะแนนสด Galaga '88</h3>
+                    <div class="sidebar-list-wrapper">
+                        <ul id="galaga-leaderboard-list">
+                            <!-- อันดับเรียลไทม์จะขึ้นที่นี่ -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4. GAME SCREEN: FAST BUZZ! (แย่งกันกดปุ่มสัญญาณ) -->
+        <section id="screen-game-buzz" class="screen">
+            <div class="game-header">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <button class="btn-back btn-back-to-lobby" title="กลับหน้าศูนย์ควบคุม">🔙 กลับ</button>
+                    <div class="room-indicator">ห้องแข่งขัน: <span>GFLETH</span> | โหมด: Fast Buzz!</div>
+                </div>
+                <div class="game-state-text" id="buzz-announcement">เตรียมกดปุ่มแย่งสิทธิ์ตอบคำถามสด!</div>
+                <div class="game-timer" id="buzz-timer-text">STANDBY</div>
+            </div>
+
+            <div class="game-layout">
+                <div class="buzz-host-layout">
+                    <!-- ผู้กดติดคนแรก -->
+                    <div class="buzz-winner-display">
+                        <div class="buzz-winner-title">🚨 กดปุ่มเร็วกระชากใจอันดับ 1 🚨</div>
+                        <div class="buzz-winner-name" id="buzz-winner-name">รอกดปุ่ม...</div>
+                        <div class="buzz-winner-time" id="buzz-winner-time">ความต่างเวลา: - ms</div>
+                    </div>
+
+                    <!-- คิวคนที่เหลือและปุ่มควบคุมของแอดมิน -->
+                    <div style="display: grid; grid-template-columns: 1fr 280px; gap: 16px; width: 100%;">
+                        <div class="card buzz-queue-list">
+                            <h4>รายชื่อผู้กดติดคิวถัดไป (Queue List)</h4>
+                            <ol id="buzz-queue-ol">
+                                <!-- รายชื่อคนที่กดทัน -->
+                            </ol>
+                        </div>
+
+                        <div class="card" style="display: flex; flex-direction: column; gap: 8px; justify-content: center;">
+                            <button id="btn-buzz-reset" class="btn btn-secondary btn-block">
+                                🔄 รีเซ็ตล้างปุ่ม (RESET)
+                            </button>
+                            <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px; margin-top: 5px;">
+                                <p style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; text-align: center;">จัดการคะแนนของคนแรก</p>
+                                <div style="display: flex; gap: 8px;">
+                                    <button id="btn-buzz-score-plus" class="btn btn-primary btn-block" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); font-size: 0.85rem; box-shadow: none;">+1 คะแนน</button>
+                                    <button id="btn-buzz-score-minus" class="btn btn-block" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color:#fff; font-size: 0.85rem; box-shadow: none;">-1 คะแนน</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 5. GAME SCREEN: LUCKY WHEEL (วงล้อสุ่มจับรางวัล) -->
+        <section id="screen-game-wheel" class="screen">
+            <div class="game-header">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <button class="btn-back btn-back-to-lobby" title="กลับหน้าศูนย์ควบคุม">🔙 กลับ</button>
+                    <div class="room-indicator">ห้องแข่งขัน: <span>GFLETH</span> | โหมด: Lucky Wheel</div>
+                </div>
+                <div class="game-state-text" id="wheel-announcement">วงล้อแห่งโชคชะตา</div>
+                <div class="game-timer" id="wheel-timer-text">READY</div>
+            </div>
+
+            <div class="game-layout">
+                <div class="wheel-host-layout">
+                    <!-- วงล้อสำหรับแสดงผล -->
+                    <div class="wheel-container">
+                        <div class="wheel-arrow"></div>
+                        <canvas id="wheel-canvas" width="600" height="600"></canvas>
+                        
+                        <!-- หน้าต่างเด้งผลผู้ชนะ -->
+                        <div class="wheel-winner-modal" id="wheel-winner-modal">
+                            <h3 style="color: var(--text-muted); font-size: 0.9rem;">🎁 ผู้โชคดีได้รับรางวัล! 🎁</h3>
+                            <div class="wheel-winner-name" id="wheel-winner-label">-</div>
+                            <button id="btn-wheel-winner-close" class="btn btn-primary" style="margin-top: 12px; font-size: 0.8rem; padding: 6px 12px;">ตกลง</button>
+                        </div>
+                    </div>
+
+                    <div class="card" style="width: 100%; max-width: 500px; text-align: center;">
+                        <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 12px;">
+                            ดึงรายชื่อผู้เล่นที่จอยอยู่ทั้งหมด: <span id="wheel-player-count">0</span> คน
+                        </p>
+                        <button id="btn-wheel-spin" class="btn btn-accent btn-block" style="font-size: 1.2rem; padding: 16px;">
+                            🎡 เริ่มหมุนวงล้อนำโชค (SPIN)
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 6. RESULT SCREEN (กระดานสรุปผลชัยชนะสะสม) -->
+        <section id="screen-result" class="screen">
+            <div class="logo-area">
+                <span class="trophy-icon">🏆</span>
+                <h1 class="result-title">สิ้นสุดการแข่งขันปาร์ตี้!</h1>
+                <p id="winner-announcement">ผู้ชนะคะแนนรวมสูงสุดคือ: <span>-</span></p>
+            </div>
+
+            <div class="card leaderboard-card">
+                <h3>ตารางสรุปคะแนนผู้ร่วมงานทั้งหมด</h3>
+                <ol id="leaderboard-list" class="leaderboard-list">
+                    <!-- โชว์อันดับตรงนี้ -->
+                </ol>
+
+                <div class="result-actions">
+                    <button id="btn-restart-game" class="btn btn-primary">
+                        🔄 เล่นใหม่อีกรอบ (RESTART)
+                    </button>
+                    <button id="btn-result-back-lobby" class="btn btn-secondary" style="background: var(--secondary-grad); color: #fff;">
+                        🔙 กลับศูนย์ควบคุม
+                    </button>
+                    <button id="btn-quit" class="btn btn-secondary" style="background: rgba(255,255,255,0.08); color: var(--text-color);">
+                        🚪 ปิดห้องแข่งขัน
+                    </button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- โหลด Host Application Controller (P2P logic สำหรับ 4 เกม) -->
+    <script src="host.js"></script>
+</body>
+</html>
