@@ -121,6 +121,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const STATIC_ROOM_CODE = 'GFLETH';
     const PEER_PREFIX = 'gfleth-rocket-';
     
+    // WebRTC ICE Servers (STUN) สำหรับช่วยค้นหาเส้นทางข้ามเน็ตเวิร์ก
+    const PEER_CONFIG = {
+        debug: 1,
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'stun:stun.services.mozilla.com' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+            ]
+        }
+    };
+    
     let myPeerId = PEER_PREFIX + STATIC_ROOM_CODE;
     let peer = null;
     let connections = [];
@@ -483,25 +499,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // === 6. NETWORK LOGIC (P2P SERVER) ===
-    const PEER_CONFIG = {
-        debug: 1,
-        config: {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' },
-                { urls: 'stun:stun.services.mozilla.com' },
-                { urls: 'stun:global.stun.twilio.com:3478' }
-            ],
-            sdpSemantics: 'unified-plan'
-        }
-    };
-
     function initHost() {
         lobbyStatusText.textContent = 'กำลังเปิดห้อง...';
-        peer = new Peer(myPeerId, PEER_CONFIG);
+        // สร้าง QR Code ทันทีตั้งแต่เริ่มต้นหน้าเว็บ
+        generateQRCode();
+
+        try {
+            peer = new Peer(myPeerId, PEER_CONFIG);
+        } catch (e) {
+            console.error('Failed to instantiate Peer:', e);
+            peer = new Peer(myPeerId, { debug: 1 });
+        }
 
         peer.on('open', (id) => {
             lobbyStatusText.textContent = 'ออนไลน์ (จอกลางหลัก)';

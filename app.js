@@ -572,8 +572,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 { urls: 'stun:stun4.l.google.com:19302' },
                 { urls: 'stun:stun.services.mozilla.com' },
                 { urls: 'stun:global.stun.twilio.com:3478' }
-            ],
-            sdpSemantics: 'unified-plan'
+            ]
         }
     };
 
@@ -592,7 +591,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // สร้าง Peer ID แบบสุ่มของผู้เล่นเอง
         myPeerId = PEER_PREFIX + 'player-' + Math.random().toString(36).substr(2, 9);
-        peer = new Peer(myPeerId, PEER_CONFIG);
+        try {
+            peer = new Peer(myPeerId, PEER_CONFIG);
+        } catch (e) {
+            console.error('Failed to instantiate Peer:', e);
+            peer = new Peer(myPeerId, { debug: 1 });
+        }
 
         peer.on('open', (id) => {
             connectToHost();
