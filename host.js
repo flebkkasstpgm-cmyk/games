@@ -119,28 +119,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // === 2. STATE VARIABLES ===
     const STATIC_ROOM_CODE = 'GFLETH';
-    const PEER_PREFIX = 'gfleth-rocket-';
     
-    // WebRTC ICE Servers (STUN) สำหรับช่วยค้นหาเส้นทางข้ามเน็ตเวิร์ก
-    const PEER_CONFIG = {
-        debug: 1,
-        config: {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' },
-                { urls: 'stun:stun.services.mozilla.com' },
-                { urls: 'stun:global.stun.twilio.com:3478' }
-            ]
-        }
-    };
+    // Firebase Cloud Realtime References (พอร์ต 443 HTTPS/WSS ทะลุเน็ต 4G/5G และ Wi-Fi 100%)
+    let db = null;
+    let roomRef = null;
+    let playersRef = null;
+    let stateRef = null;
+    let actionsRef = null;
     
-    let myPeerId = PEER_PREFIX + STATIC_ROOM_CODE;
-    let peer = null;
-    let connections = [];
-    let players = {}; // peerId -> { nickname, progress, ready, score, answers: {}, scores: {} }
+    let connections = []; // Compatibility alias
+    let players = {}; // playerId -> { nickname, progress, ready, score, answers: {}, scores: {} }
     
     let activeGameMode = 'rocket'; // 'rocket', 'catch', 'buzz', 'wheel'
     let gameActive = false;
@@ -282,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.addEventListener('resize', resizeCanvas);
     window.addEventListener('beforeunload', () => {
-        if (peer) peer.destroy();
+        if (stateRef) stateRef.child('hostOnline').set(false);
     });
 
     // Back to Lobby / Control Panel Events
@@ -398,20 +386,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!player) return;
 
         if (confirm(`คุณต้องการเตะผู้เล่น "${player.nickname}" ออกจากห้องใช่หรือไม่?`)) {
-            const conn = connections.find(c => c.peer === playerId);
-            if (conn) {
-                conn.send({
-                    type: 'KICK',
-                    message: 'คุณถูกเตะออกจากห้องโดยแอดมิน'
+            if (roomRef) {
+                roomRef.child(`kicked/${playerId}`).set({
+                    message: 'คุณถูกเตะออกจากห้องโดยแอดมิน',
+                    _t: Date.now()
                 });
-                setTimeout(() => {
-                    conn.close();
-                }, 500);
+                roomRef.child(`players/${playerId}`).remove();
             }
 
             delete players[playerId];
-            connections = connections.filter(c => c.peer !== playerId);
-
             broadcastState({ type: 'SYNC', players: players });
             updateLobbyUI();
         }
@@ -498,52 +481,113 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // === 6. NETWORK LOGIC (P2P SERVER) ===
+    // === 6. NETWORK LOGIC (FIREBASE CLOUD REALTIME - พอร์ต 443 ข้ามเน็ต 100%) ===
+    function promptFirebaseSetup() {
+        const jsonStr = prompt(
+            "⚙️ วาง Firebase Config JSON ของคุณที่นี่ (หรือใส่ใน firebase-config.js):\n\n" +
+            "ตัวอย่างรูปแบบ JSON:\n" +
+            '{"apiKey": "AIzaSy...", "databaseURL": "https://...firebasedatabase.app", "projectId": "..."}'
+        );
+        if (jsonStr) {
+            try {
+                const parsed = JSON.parse(jsonStr);
+                if (parsed.apiKey && parsed.databaseURL) {
+                    localStorage.setItem('gfleth_firebase_config', JSON.stringify(parsed));
+                    alert('✅ บันทึก Firebase Config เรียบร้อย กำลังรีโหลดระบบ...');
+                    location.reload();
+                } else {
+                    alert('❌ ข้อมูล JSON ขาด apiKey หรือ databaseURL');
+                }
+            } catch (e) {
+                alert('❌ รูปแบบ JSON ไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง');
+            }
+        }
+    }
+
     function initHost() {
-        lobbyStatusText.textContent = 'กำลังเปิดห้อง...';
+        lobbyStatusText.textContent = 'กำลังเชื่อมต่อคลาวด์...';
         // สร้าง QR Code ทันทีตั้งแต่เริ่มต้นหน้าเว็บ
         generateQRCode();
 
-        try {
-            peer = new Peer(myPeerId, PEER_CONFIG);
-        } catch (e) {
-            console.error('Failed to instantiate Peer:', e);
-            peer = new Peer(myPeerId, { debug: 1 });
+        if (typeof firebase === 'undefined' || !isFirebaseConfigured()) {
+            lobbyStatusText.textContent = '⚙️ คลิกที่นี่เพื่อตั้งค่า Firebase Cloud';
+            lobbyStatusText.style.cursor = 'pointer';
+            lobbyStatusText.style.color = '#ffaa00';
+            lobbyStatusText.onclick = promptFirebaseSetup;
+            return;
         }
 
-        peer.on('open', (id) => {
-            lobbyStatusText.textContent = 'ออนไลน์ (จอกลางหลัก)';
-            updateLobbyUI();
-            generateQRCode();
-        });
+        try {
+            db = initFirebaseApp();
+            roomRef = db.ref(`partyRooms/${STATIC_ROOM_CODE}`);
+            playersRef = roomRef.child('players');
+            stateRef = roomRef.child('state');
+            actionsRef = roomRef.child('actions');
 
-        peer.on('error', (err) => {
-            console.error('PeerJS Error:', err);
-            lobbyStatusText.textContent = 'เชื่อมต่อล้มเหลว';
-            if (err.type === 'id-taken') {
-                alert('รหัสห้องนี้ถูกเปิดใช้งานอยู่แล้ว หรือเซสชันเดิมกำลังถูกรีเซ็ตในระบบ P2P กรุณารอสักครู่แล้วลองอีกครั้ง');
-            } else {
-                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ P2P: ' + err.message);
-            }
-        });
+            // ล้างข้อมูลเกมเก่าและรีเซ็ตสถานะ
+            actionsRef.remove();
+            roomRef.child('kicked').remove();
 
-        peer.on('connection', (conn) => {
-            conn.on('open', () => {
-                connections.push(conn);
-                conn.on('data', (data) => {
-                    handleIncomingMessage(conn.peer, data);
-                });
-                
-                // ส่งสถานะปัจจุบันของเกมไปให้ผู้เข้าร่วมที่จอยใหม่ทันที
-                conn.send({
-                    type: 'INIT_STATE',
-                    game: activeGameMode,
-                    gameActive: gameActive
-                });
+            stateRef.set({
+                type: 'INIT_STATE',
+                activeGame: activeGameMode,
+                gameActive: gameActive,
+                _t: Date.now()
             });
-            conn.on('close', () => { handlePlayerDisconnect(conn.peer); });
-            conn.on('error', (err) => { handlePlayerDisconnect(conn.peer); });
-        });
+
+            lobbyStatusText.textContent = 'ออนไลน์ (Firebase Cloud 4G/5G/Wi-Fi)';
+            lobbyStatusText.style.cursor = 'default';
+            lobbyStatusText.style.color = '#00f0ff';
+            lobbyStatusText.onclick = null;
+            updateLobbyUI();
+
+            // 1. รับฟังรายชื่อผู้เล่นที่เข้ามาในห้องแบบ Real-time
+            playersRef.on('value', (snapshot) => {
+                const val = snapshot.val() || {};
+                Object.keys(val).forEach(pid => {
+                    if (!players[pid]) {
+                        players[pid] = Object.assign({
+                            nickname: val[pid].nickname || 'Player',
+                            progress: 0,
+                            score: 0,
+                            combo: 0,
+                            basketX: 0.5,
+                            currentBasketX: 0.5,
+                            shipX: 0.5,
+                            currentShipX: 0.5,
+                            dualFighter: false,
+                            catchItems: [],
+                            galagaEnemies: [],
+                            galagaLasers: [],
+                            floatingTexts: [],
+                            particles: [],
+                            ready: true,
+                            scores: { rocket: 0, catch: 0, galaga: 0, buzz: 0 }
+                        }, val[pid]);
+                    }
+                });
+
+                Object.keys(players).forEach(pid => {
+                    if (!val[pid]) {
+                        delete players[pid];
+                    }
+                });
+
+                updateLobbyUI();
+            });
+
+            // 2. รับฟังคำสั่ง/การกระทำจากผู้เล่นแบบ Real-time
+            actionsRef.on('child_added', (snapshot) => {
+                const action = snapshot.val();
+                if (action && action.senderId) {
+                    handleIncomingMessage(action.senderId, action);
+                }
+            });
+
+        } catch (err) {
+            console.error('Firebase Init Error:', err);
+            lobbyStatusText.textContent = '❌ เชื่อมต่อ Firebase ล้มเหลว';
+        }
     }
 
     // Throttled Leaderboard Updates เพื่อป้องกัน DOM Layout Thrashing & Frame Drops เมื่อมีผู้เล่นจำนวนมาก
@@ -762,29 +806,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 updateBuzzQueueUI();
                 
                 // แจ้งอันดับผู้เล่นฝั่งมือถือ
-                const conn = connections.find(c => c.peer === senderPeerId);
-                if (conn) {
-                    conn.send({
-                        type: 'BUZZ_RANK',
-                        rank: buzzQueue.length
+                // แจ้งลำดับการกด Buzzer กลับไปยังผู้เล่นผ่าน Firebase
+                if (roomRef) {
+                    roomRef.child(`buzzRank/${senderPeerId}`).set({
+                        rank: buzzQueue.length,
+                        _t: Date.now()
                     });
                 }
             }
         }
     }
 
-    function handlePlayerDisconnect(peerId) {
-        if (players[peerId]) {
-            delete players[peerId];
-            connections = connections.filter(c => c.peer !== peerId);
-            broadcastState({ type: 'SYNC', players: players });
-            updateLobbyUI();
-        }
-    }
-
     function broadcastState(data) {
-        connections.forEach(conn => {
-            if (conn.open) conn.send(data);
+        if (!stateRef) return;
+        stateRef.set({
+            ...data,
+            _t: Date.now()
         });
     }
 
@@ -2503,11 +2540,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function quitLobby() {
-        if (peer) {
-            peer.destroy();
-            peer = null;
+        if (stateRef) {
+            stateRef.set({ type: 'QUIT_LOBBY', _t: Date.now() });
         }
-        connections = [];
         players = {};
         gameActive = false;
         
