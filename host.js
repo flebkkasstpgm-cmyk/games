@@ -483,9 +483,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // === 6. NETWORK LOGIC (P2P SERVER) ===
+    const PEER_CONFIG = {
+        debug: 1,
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'stun:stun.services.mozilla.com' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+            ],
+            sdpSemantics: 'unified-plan'
+        }
+    };
+
     function initHost() {
         lobbyStatusText.textContent = 'กำลังเปิดห้อง...';
-        peer = new Peer(myPeerId, { debug: 1 });
+        peer = new Peer(myPeerId, PEER_CONFIG);
 
         peer.on('open', (id) => {
             lobbyStatusText.textContent = 'ออนไลน์ (จอกลางหลัก)';
